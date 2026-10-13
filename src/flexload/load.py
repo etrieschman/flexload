@@ -224,27 +224,46 @@ def fixed_point(
 # ----------------------------------------------------------------------------
 # B1: the planner
 # ----------------------------------------------------------------------------
-def planner(theta: LoadType, market: Market, scenario: Scenario, solver: str = "CLARABEL") -> tuple[np.ndarray, np.ndarray, float]:
-    """max_{(d, σ) ∈ 𝒟_θ} V(d, σ) − C_sys(d, σ; ω) with dᶠⁱʳᵐ = d: one program over
-    the load's and the operator's variables. The load's offer cost is in both V
-    and the LP objective (it offers at cost), so it is added back once. Returns
-    (d, σ, S*)."""
+def planner(theta: LoadType, market: Market, scenario: Scenario, tariff: Tariff | None = None, solver: str = "CLARABEL") -> tuple[np.ndarray, np.ndarray, float]:
+    """max_{(d, σ) ∈ 𝒟_θ} V(dᶜᵘʳᵗ, σ) − C_sys over the load's and the operator's
+    variables in one program. With a curtailment ``tariff`` the planner has the
+    same instrument the operator has under it: it may serve dᶜᵘʳᵗ between the
+    tariff's firm level and the bid in the curtailable hours, and the headroom
+    counts toward reserve. Without one, dᶠⁱʳᵐ = d. The load's offer cost is in
+    both V and the LP objective (it offers at cost), so it is added back once.
+    Returns (d, σ, S*)."""
     T, J = scenario.T, scenario.J
-    offer = c_s(theta, scenario.delta)
+    delta = scenario.delta
+    offer = c_s(theta, delta)
+    curtail = tariff.curtail if tariff is not None else None
+    sells = theta.sells_reserve and curtail is None
     d = cp.Variable(T)
-    sigma = cp.Variable(T) if theta.sells_reserve else np.zeros(T)
+    sigma = cp.Variable(T) if sells else np.zeros(T)
     u = cp.Variable((J, T), nonneg=True)
     r = cp.Variable((J, T), nonneg=True)
-    sigma_clr = cp.Variable(T, nonneg=True) if theta.sells_reserve else np.zeros(T)
+    sigma_clr = cp.Variable(T, nonneg=True) if sells else np.zeros(T)
     y = cp.Variable(J, nonneg=True) if market.long_run else scenario.nameplate
     z = cp.Variable((market.curve(scenario).widths.size, T), nonneg=True) if market.reserve == "ercot" else None
+    shed = cp.Variable(T, nonneg=True)
 
-    cost = market.system_cost(scenario, u, r, sigma_clr, offer, y, z)
-    welfare = V(theta, scenario.delta, d, sigma_clr) - cost + dot(offer, sigma_clr)
-    cons = market.constraints(scenario, d, sigma, d, u, r, sigma_clr, d, y, z)
-    problem = cp.Problem(cp.Maximize(welfare), list(cons.values()) + feasible(theta, scenario.delta, d, sigma))
+    extra = []
+    if curtail is not None:
+        h = curtail.hours
+        firm_level = (1.0 - curtail.beta_firm) * delta
+        d_curt_var = cp.Variable(T)
+        d_curt = where(h, d_curt_var, d)
+        d_firm = where(h, firm_level, d)
+        extra = [d_curt_var[h] >= firm_level[h], d_curt_var[h] <= d[h]]
+    else:
+        d_curt, d_firm = d, d
+
+    cost = market.system_cost(scenario, u, r, sigma_clr, offer, y, z, shed)
+    welfare = V(theta, delta, d_curt, sigma_clr) - cost + dot(offer, sigma_clr)
+    cons = market.constraints(scenario, sigma, d_firm, u, r, sigma_clr, d_curt, y, z, shed)
+    load_type = theta if sells else LoadType(theta.psi, theta.beta, theta.A, theta.p, False, theta.name)
+    problem = cp.Problem(cp.Maximize(welfare), list(cons.values()) + feasible(load_type, delta, d, sigma) + extra)
     problem.solve(solver=solver)
     if problem.status not in ("optimal", "optimal_inaccurate"):
         raise RuntimeError(f"planner failed: {problem.status}")
-    sigma_value = np.maximum(np.asarray(sigma.value), 0.0) if theta.sells_reserve else sigma
+    sigma_value = np.maximum(np.asarray(sigma.value), 0.0) if sells else sigma
     return np.asarray(d.value), sigma_value, float(problem.value)

@@ -69,7 +69,12 @@ def evaluate(
             b1 = market.clear(scenario, None, d1, s1, c_s(theta, scenario.delta))
             for name, tariff in tariffs.items():
                 d, sigma, dispatch, ex_ante, elected = respond(theta, tariff, market, scenario, how, anticipate_curtailment)
-                frames.append(summary(theta, tariff, market, scenario, dispatch, b1, S_star, ex_ante, elected))
+                if elected.curtail is not None:  # B1 gets the same instrument
+                    d1c, s1c, S_star_c = planner(theta, market, scenario, elected)
+                    b1c = market.clear(scenario, elected, d1c, s1c, c_s(theta, scenario.delta))
+                    frames.append(summary(theta, tariff, market, scenario, dispatch, b1c, S_star_c, ex_ante, elected))
+                else:
+                    frames.append(summary(theta, tariff, market, scenario, dispatch, b1, S_star, ex_ante, elected))
     return pl.concat(frames)
 
 

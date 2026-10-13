@@ -101,3 +101,16 @@ def test_load_reserve_offer_clears_when_cheap(small):
     dp = market.clear(small, tau, small.delta, sigma, np.zeros(small.T))
     assert np.all(dp.sigma <= sigma + 1e-6)
     assert np.all(dp.eta >= -1e-6)
+
+
+def test_other_load_sheds_at_voll_when_short(small):
+    """Load above capacity in one hour: the LP sheds the excess and λ = VOLL."""
+    from dataclasses import replace
+
+    tight = replace(small, d_other=small.d_other + np.array([0.0, 0.0, 200.0, 0.0]))
+    market = Market(reserve="pjm", gamma=0.0, voll=5000.0)
+    tau = named_tariffs(tight)["tau_0"]
+    dp = market.clear(tight, tau, tight.delta, np.zeros(tight.T), np.zeros(tight.T))
+    assert dp.shed[2] > 0.0 and np.allclose(dp.shed[[0, 1, 3]], 0.0, atol=1e-6)
+    assert np.isclose(dp.lam[2], 5000.0, rtol=1e-6)
+    assert np.isclose(market.C_sys(dp, tight), float((tight.cost_gen[:, None] * dp.u).sum()) + 5000.0 * dp.shed.sum(), rtol=1e-6)

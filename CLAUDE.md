@@ -81,7 +81,7 @@ src/flexload/
   operator.py   respond; evaluate; choose
 notebooks/walkthrough.py   jupytext cells; the documentation
 tests/          conftest (3-generator, 4-hour scenario); test_market, test_tariff, test_load
-docs/           assumptions.md (every non-memo choice), plan.md (the planning record), catalog/
+docs/           assumptions.md (every non-memo choice, one line each), catalog/
 ```
 
 ## Status (2026-10-13)
@@ -97,26 +97,37 @@ docs/           assumptions.md (every non-memo choice), plan.md (the planning re
 
 ### Findings from the first run (worth the memo's attention)
 
-1. **ERCOT fixed point cycles** at scarcity hours: the load leaves them, scarcity
-   vanishes, the load returns. Harmonic damping averages it; `history[-1]` reports
-   whether it settled. This is RQ3(b) showing up on day one.
-2. **Weekly missing money is negative in a peak week** (rents in 32 scarcity hours
-   exceed the weekly share of annual investment cost). The pool, and so the investment
-   layer, needs the memo's proration decision.
-3. **PJM's margin band is narrow**: with the largest unit at ~4% of load and γ = 3%,
-   the requirement is slack above ~7% margin and clearing is infeasible below it
-   (other load cannot be shed). The tightness sweep under PJM needs either load
-   shedding at VOLL for all load or unit derating.
+1. **The consistent price-taker cycles under ERCOT.** The load leaves the 32 scarcity
+   hours, scarcity vanishes, prices fall, the load returns. The map from prices to
+   response to prices has no fixed point in pure strategies when the load's tolerance
+   band straddles a merit-order step at the peak, which is the memo's own condition
+   for price-taking to stop being exact (Section "Load's beliefs"): the load is large
+   enough to change the marginal unit. `fixed_point(damping=None)` averages the
+   iteration and `history` shows whether it settled. Erich (2026-10-13): nothing wrong
+   with the cycle; it is the point of RQ3(b).
+2. **TODO, flagged by Erich: the weekly investment pool.** Missing money is annual cost
+   minus scarcity rents. Divided by 52, the peak week's rents (32 scarcity hours, ≈$195M)
+   dwarf the weekly cost share (≈$16M) and the pool is −$178M, so the investment layer
+   pays the load. Options: weekly as now; annual missing money from a 52-week B0 run,
+   spread evenly; or allocated to scarcity weeks. Decide before the investment layer
+   carries a result. Erich finds this interesting; keep it visible.
+3. **Resolved: other load now sheds at VOLL** (`Dispatch.shed`, in `C_sys`). Before
+   this, PJM's hard requirement was slack above ~7% margin and infeasible below, so
+   the tightness sweep had no room. Now λ and μ reach VOLL in shortage hours in both
+   markets.
 4. Under ERCOT, `C_sys` includes −Σ∫π, which is large and negative when reserve is
    free; regret is a difference, so it cancels there, but absolute welfare numbers
    under ERCOT are not comparable to PJM's.
-5. **Regret can be negative under τ₅/τ₆.** Curtailable headroom counts toward the
-   reserve requirement unpaid, and the planner is "evaluated with dᶠⁱʳᵐ = d", so a
-   curtailable load has a reserve resource the planner does not. Either give the
-   planner the headroom instrument or read regret under τ₅/τ₆ against that caveat.
-6. The fixed point under scarcity: `damping=0.5` (default) converges in ~17 steps on
-   PJM but cycles on ERCOT; `damping=None` (harmonic) settles ERCOT to ~1 MW in 20
-   steps at 3.5 s each.
+5. **Resolved: B1 holds the tariff's curtailment instrument.** `planner(theta, market,
+   scenario, tariff)` may serve dᶜᵘʳᵗ between the firm level and the bid in the
+   curtailable hours with the headroom counting toward reserve, so regret under τ₅/τ₆
+   is against a planner with the same constraints (Erich's reading of B1: "under a
+   given tariff"). `evaluate` does this per elected tariff.
+6. The fixed point: `damping=0.5` (default) converges in ~17 steps on PJM; under
+   scarcity use `damping=None` (harmonic), ~1 MW in 20 steps at 3.5 s each.
+7. Week 31, ERCOT, exogenous price-taker: τ₄ (two-part investment) wins both choice
+   rules for the mover; the menu τ₆ wins for the mover and loses for the CLR, which
+   must give up reserve sales to elect the curtailable option.
 
 ## Next steps, in order
 
@@ -128,14 +139,13 @@ docs/           assumptions.md (every non-memo choice), plan.md (the planning re
 4. 𝒦ʳᵉˢᵖ as a filter over the bill's layers in `best_response`.
 5. Replace placeholders: investment costs (#1), ORDC from LOLP (#3), named-type values (#16).
 6. Operator learning slot (`Operator.update`) only when a study needs it.
+7. Rewrite finding 1 as a proposition in the memo: the fixed point exists iff the tolerance band lies within one merit-order step at every hour it binds.
 
 ## Decisions needed from Erich
 
-1. Missing-money proration: weekly (current, negative in peak weeks), annual spread
-   evenly, or annual allocated to scarcity weeks.
-2. PJM tightness: allow shedding of other load at VOLL (one more LP term) or sweep by
-   derating capacity instead of scaling load.
-3. ORDC: keep the placeholder shape until an LOLP curve is built, or build it now.
-4. Named-type parameter values (ψ, β, p) and β_firm.
-5. The rate-taker sentence and the V(d, σ) argument in the memo.
-6. Whether the planner (B1) gets the curtailment headroom instrument (finding 5).
+1. **Investment pool proration** (finding 2): weekly, annual spread evenly, or annual
+   allocated to scarcity weeks. Recommendation: annual from a 52-week B0 run, spread evenly.
+2. Placeholders to replace before the paper: investment costs by category, the ORDC
+   shape (from LOLP), named-type values (ψ, β, p), β_firm. Fine for Workshop 1.
+3. Two memo sentences: the rate-taker reading of the price-taker, and V(d, σ) with the
+   reserve payment as a bill credit.

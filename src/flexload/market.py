@@ -75,6 +75,7 @@ class Dispatch:
     d_firm: np.ndarray  # the firm level the tariff set
     c_s: np.ndarray  # the offer price the load submitted
     y: np.ndarray  # (J,) capacity: nameplate in the short run, chosen in the long run
+    shed: np.ndarray = None  # other load not served, MW; priced at VOLL
     reserve_value: float = 0.0  # Σ_t ∫ π under the demand curve; 0 under a hard requirement
     status: str = ""
 
@@ -113,12 +114,15 @@ class Market:
         return DemandCurve.default(self.voll, float(largest.max()))
 
     # --- objective, written once ----------------------------------------------
-    def system_cost(self, scenario: Scenario, u, r, sigma_clr, c_s, y=None, z=None):
-        """Σ_t [Σ_j (cᵘ u + cʳ r) + cˢ σᶜˡʳ] + Σ_j cⁱⁿᵛ y (long run) − Σ_t ∫π (ercot).
-        Without the VOLL term: that is added in ``clear`` only, because it stands
-        in for the load's value the operator does not observe."""
+    def system_cost(self, scenario: Scenario, u, r, sigma_clr, c_s, y=None, z=None, shed=None):
+        """Σ_t [Σ_j (cᵘ u + cʳ r) + cˢ σᶜˡʳ + cⱽᴼᴸᴸ shed] + Σ_j cⁱⁿᵛ y (long run) − Σ_t ∫π (ercot).
+        ``shed`` is other load not served, a real cost at VOLL. The VOLL term on the
+        flexible load's own curtailment is added in ``clear`` only: it stands in
+        for the load's value, which the operator does not observe."""
         cost = sum_(mul(scenario.cost_gen[:, None], u)) + sum_(mul(scenario.cost_res[:, None], r))
         cost = cost + sum_(mul(c_s, sigma_clr))
+        if shed is not None:
+            cost = cost + self.voll * sum_(shed)
         if self.long_run:
             cost = cost + sum_(mul(scenario.cost_inv, y))
         if self.reserve == "ercot" and z is not None:
@@ -126,15 +130,16 @@ class Market:
         return cost
 
     # --- constraints, written once --------------------------------------------
-    def constraints(self, scenario: Scenario, d_bid, sigma_bid, d_firm, u, r, sigma_clr, d_curt, y, z):
+    def constraints(self, scenario: Scenario, sigma_bid, d_firm, u, r, sigma_clr, d_curt, y, z, shed):
         """The memo's dispatch constraints as a dict of named cvxpy constraints,
         so ``clear`` can read duals by name and the planner can reuse them with
-        ``d_curt`` as its own variable."""
+        ``d_curt`` as its own variable. The bounds dᶠⁱʳᵐ ≤ dᶜᵘʳᵗ ≤ d are the
+        caller's, since the planner chooses d itself."""
         T, J = scenario.T, scenario.J
         M = scenario.units
         d_sys = d_curt + scenario.d_other
         cons = {}
-        cons["balance"] = cp.sum(u, axis=0) == d_sys
+        cons["balance"] = cp.sum(u, axis=0) + shed == d_sys
         if self.long_run:
             cons["capacity"] = u + r <= cp.multiply(scenario.availability, cp.reshape(y, (J, 1), order="C") @ np.ones((1, T)))
         else:
@@ -154,9 +159,6 @@ class Market:
             cons["segments"] = z[np.isfinite(widths), :] <= widths[np.isfinite(widths), None]
         if sigma_clr is not None and not isinstance(sigma_clr, np.ndarray):
             cons["offer"] = sigma_clr <= sigma_bid
-        if not isinstance(d_curt, np.ndarray) and d_firm is not d_curt:
-            cons["curtail_lo"] = d_curt >= d_firm
-            cons["curtail_hi"] = d_curt <= d_bid
         return cons
 
     # --- clearing ----------------------------------------------------------------
@@ -181,19 +183,19 @@ class Market:
         z = None
         if self.reserve == "ercot":
             z = cp.Variable((self.curve(scenario).widths.size, T), nonneg=True)
+        shed = cp.Variable(T, nonneg=True)  # other load not served, at VOLL
 
-        cost = self.system_cost(scenario, u, r, sigma_clr, c_s, y, z)
+        cost = self.system_cost(scenario, u, r, sigma_clr, c_s, y, z, shed)
         if curtailable:
             cost = cost + self.voll * cp.sum(d - d_curt)
-        cons = self.constraints(scenario, d, sigma, d_firm, u, r, sigma_clr, d_curt, y, z)
+        cons = self.constraints(scenario, sigma, d_firm, u, r, sigma_clr, d_curt, y, z, shed)
+        if curtailable:
+            cons["curtail_lo"] = d_curt >= d_firm
+            cons["curtail_hi"] = d_curt <= d
         problem = cp.Problem(cp.Minimize(cost), list(cons.values()))
         problem.solve(solver=self.solver, **self.solver_options)
         if problem.status not in ("optimal", "optimal_inaccurate"):
-            raise RuntimeError(
-                f"clearing failed: {problem.status}. Other load cannot be shed, so the "
-                f"scenario's reserve margin must cover gamma={self.gamma} plus, under PJM, "
-                f"the largest unit's share of load (see scenario.reserve_margin)."
-            )
+            raise RuntimeError(f"clearing failed: {problem.status}")
 
         # cvxpy reports an equality dual as -∂cost/∂rhs. Balance has load on the
         # right, so λ = -dual; the demand-curve row has reserve on the right and
@@ -222,6 +224,7 @@ class Market:
             d_firm=d_firm,
             c_s=np.asarray(c_s),
             y=np.asarray(y.value if self.long_run else y),
+            shed=np.asarray(shed.value),
             reserve_value=reserve_value,
             status=problem.status,
         )
@@ -229,7 +232,7 @@ class Market:
     # --- read off a dispatch --------------------------------------------------------
     def C_sys(self, dispatch: Dispatch, scenario: Scenario) -> float:
         """The objective at the solution without the VOLL term (the memo's C_sys)."""
-        cost = self.system_cost(scenario, dispatch.u, dispatch.r, dispatch.sigma, dispatch.c_s, dispatch.y)
+        cost = self.system_cost(scenario, dispatch.u, dispatch.r, dispatch.sigma, dispatch.c_s, dispatch.y, None, dispatch.shed)
         return float(cost - dispatch.reserve_value)
 
     def pools(self, dispatch: Dispatch, scenario: Scenario) -> tuple[np.ndarray, float]:

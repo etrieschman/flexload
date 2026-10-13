@@ -115,3 +115,17 @@ def test_evaluate_table(small):
     table = evaluate(tariffs, types, market, [small])
     assert table.shape[0] == 6
     assert (table["regret"] >= -1e-4).all()
+
+
+def test_planner_with_curtailment_bounds_regret(small):
+    """Under tau_5 the planner holds the same instrument, so regret is nonnegative."""
+    from dataclasses import replace
+
+    tight = replace(small, d_other=small.d_other + np.array([0.0, 0.0, 60.0, 0.0]))
+    market = Market(reserve="pjm", gamma=0.0, voll=5000.0)
+    tau_5 = named_tariffs(tight, beta_firm=0.5)["tau_5"]
+    theta = named_types(tight.T)["mover"]
+    d1, s1, S_star = planner(theta, market, tight, tau_5)
+    d, sigma, dispatch, ex_ante, elected = respond(theta, tau_5, market, tight)
+    assert S_star >= S(theta, market, tight, dispatch) - 1e-4
+    assert S_star >= planner(theta, market, tight)[2] - 1e-4  # the instrument cannot hurt the planner
