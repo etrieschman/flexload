@@ -1,0 +1,419 @@
+# Schema for the cost-allocation layer inventory.
+#
+# A record is one layer k in the bill decomposition B = sum_k Phi^k(x^k; p, q; z).
+# Records are unique on (layer, market).
+#
+# Every field must do one of three jobs: identify the row, describe how the
+# charge is computed, or establish provenance. Anything else goes in `notes`.
+#
+# Base and charge are both LaTeX. Writing them as formulas rather than prose is
+# what makes structure visible - a truncation at zero, a price floor, a
+# renormalisation across payers. Each formula carries its own definitions list
+# with units, so no symbol goes undefined and no quantity is dimensionless by
+# accident.
+
+fields:
+
+  # --- identity -------------------------------------------------------------
+  - name: id
+    role: identity
+    required: true
+    type: string
+    doc: Stable slug, {layer}__{market}. Never reuse.
+
+  - name: layer
+    role: identity
+    required: true
+    type: string
+    doc: >
+      Layer name, shared across markets so rows align when a second market is
+      added. Every layer must exist in every market as a record, even if only
+      as a placeholder or with status absent or absorbed.
+
+  - name: market
+    role: identity
+    required: true
+    type: enum
+    vocab: market
+
+  - name: status
+    role: identity
+    required: true
+    type: enum
+    vocab: status
+    doc: >
+      Whether this market charges this layer at all. Kept separate from
+      base_type and rate_type on purpose - "what kind of quantity is measured"
+      and "does a charge exist here" are different questions, and folding the
+      second into the first makes `absorbed` look like a kind of quantity.
+      When status is not `present`, base and rate are null.
+
+  - name: payer
+    role: identity
+    required: true
+    type: enum
+    vocab: payer
+    doc: >
+      The entity the market actually bills. Not the same as the load consuming
+      the power - how a charge reaches an individual load from the entity that
+      receives the invoice is a retail question this inventory excludes.
+      This field exists because the answer is not uniform: most layers are
+      settled against the scheduling entity, transmission against the
+      distribution utility.
+
+  - name: redirect
+    role: identity
+    required: false
+    type: string
+    doc: >
+      The `id` of the record that carries this cost instead. Required when
+      status is `absorbed`, null otherwise. Keeps an absorbed layer in the
+      inventory as a pointer rather than dropping it, so the layer universe
+      stays the same across markets.
+
+  # --- base: x^k ------------------------------------------------------------
+  - name: base
+    role: base
+    required: true
+    type: formula
+    doc: >
+      LaTeX. The billing determinant as a function of the payer's own action.
+      Administratively set scalars (reserve margins, loss factors, allocation
+      factors) belong in the charge, not here. Write the determinant exactly as
+      it enters the bill, kinks and all - a max(0, .) or a floor is part of the
+      base, not a footnote to it. Null when status is not `present`.
+
+  - name: base_type
+    role: base
+    required: true
+    type: enum
+    vocab: base_type
+    doc: What kind of quantity the determinant is. Null when status is not `present`.
+
+  - name: base_definitions
+    role: base
+    required: false
+    type: struct_list
+    subfields: [symbol, unit, definition]
+    doc: >
+      One entry per symbol appearing in `base`, starting with x^k itself.
+      Symbols are LaTeX. `unit` is required because the measurement window does
+      not determine it - a base measured over four intervals may be a demand
+      level in MW, while one accumulated over a single interval is energy in
+      MWh. Use an em dash for dimensionless quantities and index symbols.
+
+  - name: base_derived
+    role: base
+    required: false
+    type: bool
+    doc: >
+      True when the recorded formula is a reconstruction rather than a formula
+      the source states. Generalising across several parallel provisions counts
+      as reconstruction. Without this flag an author's algebra is presented
+      identically to quoted material.
+
+  - name: base_note
+    role: base
+    required: false
+    type: prose
+    doc: >
+      Where the recorded base departs from the source's own stated determinant,
+      and why. Plain language - this is the field a reader consults when the
+      formula surprises them. Null when they coincide.
+
+  # --- timing ---------------------------------------------------------------
+  - name: measurement_window
+    role: timing
+    required: true
+    type: prose
+    doc: The period over which the determinant is measured.
+
+  - name: billing_window
+    role: timing
+    required: true
+    type: prose
+    doc: >
+      The period the resulting charge covers. Often the same as the measurement
+      window; where they differ, the gap is the point.
+
+  - name: determinacy
+    role: timing
+    required: true
+    type: enum
+    vocab: determinacy
+    doc: >
+      When the determinant becomes knowable, relative to the action that sets
+      it. Two layers can share a measurement window and still differ here, and
+      the difference changes what a responsive payer can actually do.
+
+  # --- charge: Phi^k --------------------------------------------------------
+  - name: pool
+    role: rate
+    required: false
+    type: prose
+    doc: >
+      The dollars being recovered (C^k). Null for market-clearing layers, which
+      have no revenue requirement to divide.
+
+  - name: rate
+    role: rate
+    required: true
+    type: formula
+    doc: >
+      LaTeX for the whole charge Phi^k, base included - not a per-unit rate.
+      Name any administrative scalars as symbols and define them in
+      `rate_definitions`. Null when status is not `present`.
+
+  - name: rate_type
+    role: rate
+    required: true
+    type: enum
+    vocab: rate_type
+    doc: How the charge is set. Null when status is not `present`.
+
+  - name: rate_definitions
+    role: rate
+    required: false
+    type: struct_list
+    subfields: [symbol, unit, definition]
+    doc: >
+      One entry per symbol appearing in `rate`, starting with Phi^k itself.
+      Symbols are LaTeX. Phi^k must come out in dollars.
+
+  - name: rate_derived
+    role: rate
+    required: false
+    type: bool
+    doc: As `base_derived`, for the charge formula.
+
+  - name: exact_recovery
+    role: rate
+    required: true
+    type: enum
+    vocab: tristate
+    doc: >
+      Does the sum over payers of Phi^k equal C^k by construction?
+      `n/a` for market-clearing layers and where status is not `present`.
+
+  - name: true_up
+    role: rate
+    required: true
+    type: prose
+    doc: >
+      Mechanism reconciling collections to the pool, or `none`.
+      Consistency check - a `posted` rate with no true-up is a finding.
+
+  # --- provenance -----------------------------------------------------------
+  - name: source
+    role: provenance
+    required: true
+    type: struct_or_list
+    subfields: [document, section, effective_date, quote, url]
+    doc: >
+      One entry, or a list of them where the mechanism is spread across
+      provisions. A list is not a convenience - a layer assembled from four
+      sections cannot be honestly evidenced by quoting one and citing the rest
+      by number. Order the list the way the mechanism runs, earliest first.
+
+  - name: notes
+    role: free
+    required: false
+    type: prose
+    doc: >
+      Facts about this layer that the fields above do not hold. Self-contained -
+      a record should be readable without reference to any other record.
+
+
+# Index letters used across every formula. Kept deliberately narrow and
+# deliberately clear of the letters a demand model normally spends on prices,
+# quantities and their components. Rendered as a glossary on the page.
+notation:
+
+  - symbol: 'k'
+    meaning: >
+      The layer. Superscript on the base, the charge and the pool, so x^k,
+      Phi^k and C^k always belong to the same record.
+
+  - symbol: 'e'
+    meaning: >
+      The entity the market bills - the scheduling entity for almost every
+      layer, the distribution utility for transmission. Not an individual load.
+
+  - symbol: 'e^{\prime}'
+    meaning: Another such entity. Appears only in the denominators that turn a pool into a share.
+
+  - symbol: 'n'
+    meaning: >
+      A node - a single point on the transmission network. ERCOT calls these
+      Electrical Buses; node is used here because that is the term the wider
+      literature uses for the same object.
+
+  - symbol: 'z'
+    meaning: >
+      A Load Zone - a group of nodes ERCOT prices together. Load settles
+      against the zone rather than the node, so the zone is also the settlement
+      point for load. Used bare, z ranges over the whole zone, which is what
+      prices are averaged across; determinants instead range over the entity's
+      own zones, written Z_e.
+
+  - symbol: '\mathcal{N}_{z},\; \mathcal{T}_{t},\; \mathcal{M},\; \mathcal{A},\; \mathcal{V},\; \mathcal{E}'
+    meaning: >
+      Sets are calligraphic capitals, their elements the matching lowercase
+      letter. In order: the nodes making up zone z; the intervals making up a
+      span, written T_t for the dispatch intervals inside settlement period t
+      and T_{m,y} for the settlement intervals inside month m of year y; the
+      four summer peak months; the ancillary service products; the real-time
+      money flows; and all billed entities. A sum over any of these ranges over
+      the whole system.
+
+  - symbol: '\mathcal{N}_{e,z},\; \mathcal{Z}_{e},\; \mathcal{P}'
+    meaning: >
+      The entity-scoped sets: the nodes inside zone z at which entity e serves
+      load, the zones in which it serves load, and the service periods of a
+      contract it is billed across. Determinants sum over these, never over the
+      system-wide sets - an entity is billed on its own load, not on everything
+      inside a zone it happens to occupy. The distinction carries the content of
+      the energy layer, where the base sums the entity's own nodes while the
+      price multiplying it is averaged over every node in the zone, whoever
+      serves load there.
+
+  - symbol: 't,\; s'
+    meaning: >
+      The settlement period being billed, and a dispatch interval inside it
+      (s in T_t). Settlement period length varies by layer - fifteen minutes,
+      an hour, a month - and each record states which under its measurement
+      window. ERCOT redispatches roughly every five minutes, so several s fall
+      inside one t and prices must be averaged across them.
+
+  - symbol: 'm,\; y'
+    meaning: Calendar month and year. Used only by the annual peak-demand layer.
+
+  - symbol: 'a'
+    meaning: An ancillary service product. ERCOT procures five of them.
+
+  - symbol: '\mathrm{AML}_{e,z,t}'
+    meaning: >
+      Adjusted Metered Load - the quantity nearly every determinant in this
+      inventory is built from, and not the same thing as metered consumption.
+      ERCOT defines it as retail usage adjusted for unaccounted-for energy,
+      transmission losses, distribution losses and DC tie exports, so it is
+      larger than what the meter recorded. Losses are recovered by inflating
+      this quantity rather than by any separate charge, which is why the loss
+      layer is marked absorbed. Written with a node subscript instead of a zone
+      subscript, as AML_{e,n,t}, in the one layer that works nodally.
+
+  - symbol: '\mathrm{LRS}_{e,t}'
+    meaning: >
+      Load Ratio Share - the entity's fraction of total truncated metered load
+      in the same period, x^k_{e,t} divided by the sum of x^k over all entities.
+      This one ratio allocates most pooled costs in ERCOT, which is why so many
+      layers share a determinant: once an entity's consumption share is known,
+      so is its share of nearly every pool. Shares sum to one by construction,
+      because the denominator is the sum of the same truncated quantities that
+      form each numerator. Contemporaneous unless a record says otherwise.
+
+  - symbol: '\max(0,\;\cdot)'
+    meaning: >
+      The truncation ERCOT applies to an entity's metered load in each of its
+      zones before summing them. An entity whose load nets negative in one zone
+      is treated as zero there rather than credited, so shares are built from
+      truncated quantities and not from net load.
+
+  - symbol: 'x^{k},\; \Phi^{k},\; C^{k}'
+    meaning: >
+      The base (what is measured), the charge (what is billed) and the pool
+      (the dollars being recovered), for layer k.
+
+
+vocabularies:
+
+  market:
+    - ercot
+    - pjm
+    - caiso
+    - miso
+    - nyiso
+    - isone
+    - spp
+
+  status:
+    present:
+      doc: The market charges this layer, and the record describes how.
+    absent:
+      doc: >
+        The market has no analogue. No charge exists, so there is no
+        determinant to record.
+    absorbed:
+      doc: >
+        The function exists but is priced inside another layer, so it has no
+        determinant of its own. Name the host record in `redirect`. Distinct
+        from `absent` - the money is still collected, just not separably.
+
+  payer:
+    qse:
+      doc: >
+        Qualified Scheduling Entity. The party that schedules with ERCOT and
+        receives its settlement statements. A QSE may represent many load
+        serving entities, and determinants computed at the QSE level are
+        computed across that whole portfolio.
+    dsp:
+      doc: >
+        Distribution Service Provider. The utility that owns the distribution
+        network and is invoiced directly by transmission owners.
+    lse:
+      doc: >
+        Load Serving Entity. Sells energy to end customers. Shares are
+        sometimes computed at this level before being aggregated to a QSE.
+
+  base_type:
+    metered_energy:
+      doc: MWh withdrawn over a period.
+    coincident_peak:
+      doc: Demand during system or zonal peak intervals (1CP, 4CP, 12CP, peak load contribution).
+    non_coincident_peak:
+      doc: The payer's own maximum demand, whenever it occurs.
+    contracted_capacity:
+      doc: MW reserved or contracted for, independent of use.
+    deviation:
+      doc: Gap between an obligation and what was actually brought or scheduled.
+    fixed:
+      doc: Per-payer, lump sum, or directly assigned; not proportional to usage.
+
+  rate_type:
+    market_clearing:
+      doc: Price from a clearing process. No pool.
+    average_cost:
+      doc: Pool divided by total base, possibly weighted. The C^k x^k / X^k form.
+    posted:
+      doc: Per-unit rate set ex ante in tariff or by formula rate.
+    direct_assignment:
+      doc: Pool assigned to a single payer; base is the whole base.
+
+  determinacy:
+    contemporaneous:
+      doc: >
+        Measured over the same period that is billed. The payer knows the
+        determinant as it acts, and acting differently changes that period's
+        charge.
+    retrospective:
+      doc: >
+        The determinant turns on an outcome that is not resolved until after
+        the measurement period closes - for example whether a given interval
+        turned out to be the system peak. The payer must act without knowing
+        whether the action counted.
+    historical:
+      doc: >
+        Fixed by a period that had already closed before the billing period
+        began. Acting differently during the billing period cannot change it.
+
+  # Quoted deliberately. Bare yes/no are YAML 1.1 booleans, so an unquoted
+  # `exact_recovery: yes` in a record loads as True and renders as "True",
+  # while a quoted "yes" fails validation against an unquoted vocabulary.
+  # Keep both sides strings.
+  tristate: ["yes", "no", "n/a"]
+
+
+# NOT base types. Expect these phrases in source text and resist them:
+#   load ratio share  -> a rate form (average_cost), applied to some other base
+#   demand charge     -> ambiguous; resolve to coincident vs non-coincident peak
+#   allocation factor -> a rate parameter

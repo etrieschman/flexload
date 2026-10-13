@@ -1,0 +1,1391 @@
+# Cost-allocation layer inventory.
+#
+# Every `TODO` is still to be filled from source text. Nothing here is asserted
+# without a citation and a verbatim quote.
+#
+# Records are unique on (layer, market). Every layer exists as a record in
+# every market, even where the market has no such charge - `status` then reads
+# `absent` or `absorbed`, and an absorbed layer points at the record that
+# swallowed it via `redirect`.
+#
+# THE UNIT. ERCOT settles with the Qualified Scheduling Entity, written e
+# throughout. Every protocol formula here indexes by that entity, and every
+# determinant is computed across its whole portfolio - so a truncation at zero,
+# or a load ratio share, applies to the portfolio and not to an individual load
+# inside it. The one exception is transmission, which a state rule bills to the
+# Distribution Service Provider instead; `payer` records which applies. How a
+# charge then reaches an individual load is a retail question this inventory
+# excludes. Index letters are listed under `notation` in schema.yaml.
+#
+# COVERAGE. The layer list is reconciled against Section 9.5.3, which
+# enumerates every real-time settlement charge type. Charge types falling on
+# generators rather than load - resource set point deviation charges, RUC
+# clawback, high dispatch limit overrides, congestion right settlements - are
+# out of scope by design. Load-allocated charge types not yet given a record:
+# 6.6.9.2 emergency operations, 6.6.3.10 constraint management plan cost
+# recovery, 6.7.2.8 derated ancillary service capability, 6.6.6.12 must-run
+# alternative service, and 9.18 profile development cost recovery.
+#
+# Ancillary services are one layer, not several. In ERCOT the five live
+# products (Reg-Up, Reg-Down, RRS, Non-Spin, ECRS) are allocated by an
+# identical formula differing only in the product acronym. A sixth, DRRS, is
+# drafted into the protocols behind a pending implementation flag (NPRR1309)
+# and is not yet charged.
+#
+# Symbols shared across records - Adjusted Metered Load, the Load Ratio Share,
+# the truncation at zero, and the index letters - are declared once under
+# `notation` in schema.yaml and rendered as a glossary on the page. Records
+# define only what is specific to them.
+
+records:
+
+- id: energy_congestion__ercot
+  layer: energy_congestion
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,z,t} \;=\; \sum_{n \,\in\, \mathcal{N}_{e,z}} \mathrm{AML}_{e,n,t}'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,z,t}'
+      unit: MWh per 15-min interval
+      definition: >
+        The entity's own adjusted metered withdrawal inside one Load Zone,
+        accumulated over one settlement interval. Zone-level because the price
+        is set per zone - an entity holding load in several zones has one of
+        these for each, and the charge sums over the zones it serves.
+    - symbol: '\mathcal{N}_{e,z}'
+      unit: —
+      definition: >
+        The nodes inside Load Zone z at which this entity actually serves load -
+        not every node in the zone. Contrast the price below, which is averaged
+        over N_z, every node in the zone, regardless of who serves load there.
+  base_note: >
+    The protocol writes this determinant as an imbalance rather than as gross
+    load: metered load net of whatever the load already bought in the day-ahead
+    market, plus or minus self-schedules and energy trades. It is recorded here
+    as gross metered load instead, because the day-ahead purchase is a fixed
+    financial position that does not change with real-time behaviour. An extra
+    MWh consumed in real time costs the load one times the real-time price no
+    matter what it bought the day before.
+  measurement_window: >
+    The 15-minute Settlement Interval being billed.
+  billing_window: >
+    The same 15-minute Settlement Interval.
+  determinacy: contemporaneous
+  pool: null
+  rate: '\Phi^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \mathrm{RTSPP}^{\mathrm{EW}}_{z,t}\; x^{k}_{e,z,t} \qquad\qquad \mathrm{RTSPP}^{\mathrm{EW}}_{z,t} \;=\; \max\!\left(\underline{\pi},\;\; \sum_{n \,\in\, \mathcal{N}_{z}}\ \sum_{s \,\in\, \mathcal{T}_{t}} \mathrm{LMP}_{n,s}\,\mathrm{LZWF}_{n,s} \;+\; \mathrm{RTRDP}_{t}\right) \qquad \mathrm{LZWF}_{n,s} \;=\; \frac{\mathrm{SEL}_{n,s}\,\mathrm{TLMP}_{s}}{\sum_{n^{\prime} \in \mathcal{N}_{z}}\sum_{s^{\prime} \in \mathcal{T}_{t}}\mathrm{SEL}_{n^{\prime},s^{\prime}}\,\mathrm{TLMP}_{s^{\prime}}} \qquad \mathrm{RTRDP}_{t} \;=\; \sum_{s \,\in\, \mathcal{T}_{t}}\mathrm{RNWF}_{s}\,\mathrm{RTRDPA}_{s}'
+  rate_type: market_clearing
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: The QSE's energy charge for the interval.
+    - symbol: '\mathrm{RTSPP}^{\mathrm{EW}}_{z,t}'
+      unit: $/MWh
+      definition: >
+        The energy-weighted zonal settlement price. This, not the plain zonal
+        price, is what multiplies metered load - the plain one applies to
+        scheduled and day-ahead positions. An average across the whole zone,
+        never the price at the QSE's own location.
+    - symbol: '\mathrm{LMP}_{n,s}'
+      unit: $/MWh
+      definition: >
+        Locational Marginal Price at node n in dispatch interval s - the cost of
+        serving one more MWh at that specific point on the network.
+    - symbol: '\mathrm{LZWF}_{n,s}'
+      unit: —
+      definition: >
+        The weight collapsing every node in the zone and every dispatch
+        interval into one zonal price. Combines load at each node with the
+        duration of each dispatch interval, so the average is both
+        load-weighted and time-weighted. Ranges over the whole zone, not over
+        the entity's own nodes.
+    - symbol: '\mathrm{SEL}_{n,s}'
+      unit: MW
+      definition: State Estimated Load at node n during dispatch interval s.
+    - symbol: '\mathrm{TLMP}_{s}'
+      unit: seconds
+      definition: >
+        Duration of dispatch interval s. Dispatch runs about every five minutes
+        inside a fifteen-minute settlement interval, and intervals are not
+        equal length, so they are weighted by how long each one lasted.
+    - symbol: '\mathrm{RTRDP}_{t}'
+      unit: $/MWh
+      definition: >
+        Reliability Deployment Price for Energy - the settlement-interval
+        aggregate, not the adder itself.
+    - symbol: '\mathrm{RTRDPA}_{s}'
+      unit: $/MWh
+      definition: >
+        Reliability Deployment Price Adder for dispatch interval s. Compensates
+        for the price-suppressing effect of out-of-market reliability actions.
+        Administrative, not a clearing outcome.
+    - symbol: '\mathrm{RNWF}_{s}'
+      unit: —
+      definition: >
+        The time weight that aggregates per-dispatch-interval adders up to the
+        settlement interval - each dispatch interval counts in proportion to
+        how long it lasted.
+    - symbol: '\underline{\pi}'
+      unit: $/MWh
+      definition: Administrative price floor, set at -$251/MWh.
+  exact_recovery: "n/a"
+  true_up: none
+  redirect: null
+  source:
+    - document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+      section: 6.6.1.2, Real-Time Settlement Point Price for a Load Zone, paras (1) and (2)
+      effective_date: 2026-08-01
+      quote: >
+        The Real-Time Settlement Point Price for a Load Zone Settlement Point is
+        based on the state-estimated Load in MW and the time-weighted average
+        Real-Time LMPs at Electrical Buses that are included in the Load Zone.
+      url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+    - document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+      section: 6.6.3.2, Real-Time Energy Imbalance Payment or Charge at a Load Zone, para (2)
+      effective_date: 2026-08-01
+      quote: >
+        RTEIAMT q, p = (-1) * {[RTSPP p * [(SSSK q, p * 1/4) + (DAEP q, p * 1/4)
+        + (RTQQEP q, p * 1/4) - (SSSR q, p * 1/4) - (DAES q, p * 1/4) -
+        (RTQQES q, p * 1/4)]] + [RTSPPEW p * (RTMGSOGZ q, p - (RTAML q, p -
+        RTAMLESRNW q, p))]}
+      url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+    - document: ERCOT Nodal Protocols, Section 2 - Definitions and Acronyms
+      section: Section 2.1, definition of Adjusted Metered Load (AML)
+      effective_date: 2026-08-01
+      quote: >
+        Adjusted Metered Load (AML) Retail Load usage data that has been
+        adjusted for Unaccounted for Energy (UFE), Transmission Losses,
+        Distribution Losses, and Direct Current Tie (DC Tie) exports.
+      url: https://www.ercot.com/files/docs/2024/06/28/02-080126_Nodal.docx
+  notes: >
+    The base and the price range over different sets, which is the whole point
+    of this record. The base sums only the nodes where the entity actually
+    serves load; the price is a load-weighted average across every node in the
+    zone, whoever serves load there. A single entity's own location enters that
+    average only through its share of zonal load, which is negligible. So the
+    cost of an extra MWh to the entity is the zone average price, while the
+    cost to the system is the price at the node it withdrew from.
+    Those differ whenever there is congestion inside the zone.
+    Two administrative terms also sit inside what is nominally a clearing
+    price: a floor at -$251/MWh, and the Reliability Deployment Price Adder.
+    Neither comes out of the optimisation.
+    Since December 2025 this price also carries all scarcity value - see the
+    Scarcity Adder record.
+    One layer sits hidden inside the base. Turning a meter reading into
+    Adjusted Metered Load requires allocating unaccounted-for energy and network
+    losses across loads, and each of those is a cost allocation with its own
+    rule. Candidate for its own record.
+
+- id: marginal_losses__ercot
+  layer: marginal_losses
+  market: ercot
+  status: absorbed
+  payer: qse
+  base: null
+  base_type: null
+  base_note: null
+  measurement_window: null
+  billing_window: null
+  determinacy: contemporaneous
+  pool: null
+  rate: null
+  rate_type: null
+  exact_recovery: "n/a"
+  true_up: none
+  redirect: energy_congestion__ercot
+  source:
+    document: ERCOT Nodal Protocols, Section 2 - Definitions and Acronyms
+    section: Definition of Adjusted Metered Load (AML)
+    effective_date: 2026-08-01
+    quote: >
+      Adjusted Metered Load (AML) Retail Load usage data that has been adjusted
+      for Unaccounted for Energy (UFE), Transmission Losses, Distribution
+      Losses, and Direct Current Tie (DC Tie) exports.
+    url: https://www.ercot.com/files/docs/2024/06/28/02-080126_Nodal.docx
+  notes: >
+    ERCOT recovers losses by grossing up the quantity rather than by adding a
+    price component. Losses are folded into Adjusted Metered Load before any
+    charge is calculated, so a load is billed for more MWh than its meter
+    recorded and pays the ordinary energy price on the difference. There is no
+    separate loss charge and no separate loss determinant.
+    That placement has a consequence worth noting: because the adjustment
+    enters the base rather than the rate, it scales every layer that uses
+    Adjusted Metered Load, not just energy. The loss and unaccounted-for-energy
+    allocation rules are therefore doing quiet work across most of this
+    inventory, and they have not been extracted.
+
+- id: ruc_capacity_short__ercot
+  layer: ruc_capacity_short
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \mathrm{SF}_{e,t}, \qquad \mathrm{SF}_{e,t} \;=\; \max\!\left(0,\;\; \mathrm{Obligation}_{e,t} \;-\; \mathrm{Capacity}_{e,t}\right)'
+  base_type: deviation
+  base_derived: true
+  base_definitions:
+    - symbol: '\mathrm{SF}_{e,t}'
+      unit: MW
+      definition: >
+        The QSE's capacity shortfall for the interval - how far the generation
+        capacity it brought fell short of what it needed to cover its own load.
+        Zero for a QSE that is long.
+    - symbol: '\mathrm{Obligation}_{e,t}'
+      unit: MW
+      definition: >
+        The capacity the entity needed to have covered for the interval, as
+        determined by the reliability commitment process.
+    - symbol: '\mathrm{Capacity}_{e,t}'
+      unit: MW
+      definition: >
+        Capacity the QSE had committed and available. Counted only for
+        resources meeting the conditions in 5.7.4.1.1 - self-committed, quick
+        start, or released switchable units.
+    - symbol: 't'
+      unit: —
+      definition: A 15-minute Settlement Interval.
+  base_note: >
+    This is the one base in the inventory that is not a measure of consumption.
+    It measures a gap - the distance between what a QSE needed and what it
+    brought - so it is a deviation, and it is zero for anyone adequately
+    covered. A load that grows without arranging matching capacity increases
+    this base directly.
+  measurement_window: >
+    The 15-minute Settlement Interval being billed.
+  billing_window: >
+    The same 15-minute Settlement Interval.
+  determinacy: contemporaneous
+  pool: >
+    Make-whole payments to units that ERCOT committed for reliability when the
+    market did not commit enough on its own, including amounts for
+    reliability-must-run units.
+  rate: '\Phi^{k}_{e,t} \;=\; \min\!\left[\; \frac{x^{k}_{e,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},t}}\,C^{k}, \;\;\; \frac{2\,C^{k}\,x^{k}_{e,t}}{K_{t}} \;\right] \Big/ 4'
+  rate_type: average_cost
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: the QSE's capacity-short charge for the interval.
+    - symbol: 'C^{k}'
+      unit: $
+      definition: >
+        Total make-whole payments for the reliability commitment process in the
+        hour containing this interval.
+    - symbol: 'K_{t}'
+      unit: MW
+      definition: >
+        Total capacity of all resources committed by that reliability process.
+        Appears only in the cap.
+  rate_derived: true
+  exact_recovery: "no"
+  true_up: >
+    Yes, via a second layer. Whatever the cap prevents this charge from
+    collecting is uplifted to all loads on a load ratio share basis under the
+    Uplift record.
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 5 - Transmission Security Analysis and Reliability Unit Commitment
+    section: 5.7.4.1, RUC Capacity-Short Charge, para (1); shortfall share at 5.7.4.1.1
+    effective_date: 2026-08-01
+    quote: >
+      The dollar amount charged to each QSE, due to capacity shortfalls for a
+      particular RUC, for a 15-minute Settlement Interval, is the QSE's
+      shortfall ratio share multiplied by the total RUC Make-Whole Payments,
+      including amounts for RMR Units, to all QSEs for that RUC, subject to a
+      cap. The cap on the charge to each QSE is two multiplied by the total RUC
+      Make-Whole Payments, including amounts for RMR Units, for all QSEs
+      multiplied by that QSE's capacity shortfall for that RUC process divided
+      by the total capacity of all RUC-committed Resources during that
+      Settlement Interval for the RUC process.
+    url: https://www.ercot.com/files/docs/2024/06/28/05-080126_Nodal.docx
+  notes: >
+    Added as a layer of its own rather than folded into Uplift, because the two
+    have genuinely different bases. This tier is charged on a shortfall; the
+    residual tier is charged on metered energy. Anything that fails to stick
+    here lands there.
+    The cap makes recovery inexact by design. It binds precisely when shortfall
+    is concentrated in a few payers - the case where a shortfall base would
+    otherwise assign a very large charge to whoever was short - and the
+    shortfall that the cap declines to collect is then socialised across all
+    load.
+    This is the closest ERCOT comes to charging a load for the reliability
+    consequences of its own growth. Because it targets the gap between load and
+    arranged capacity rather than load itself, a flexible load can reduce it
+    either by consuming less or by arranging capacity, which is a different
+    margin from every other layer here.
+
+- id: scarcity_adder__ercot
+  layer: scarcity_adder
+  market: ercot
+  status: absorbed
+  payer: qse
+  base: null
+  base_type: null
+  base_note: null
+  measurement_window: null
+  billing_window: null
+  determinacy: contemporaneous
+  pool: null
+  rate: null
+  rate_type: null
+  exact_recovery: "n/a"
+  true_up: none
+  redirect: energy_congestion__ercot
+  source:
+    document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+    section: 6.5.7.3, Security Constrained Economic Dispatch, para (1)
+    effective_date: 2026-08-01
+    quote: >
+      The SCED process evaluates Energy Offer Curves, Energy Bid/Offer Curves,
+      Ancillary Service Offers, Output Schedules, and RTM Energy Bids to
+      determine Resource Dispatch Instructions and Ancillary Service awards by
+      maximizing bid-based revenues minus offer-based costs, subject to power
+      balance, Ancillary Service Demand Curves (ASDCs), and network constraints.
+    url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+  notes: >
+    ERCOT no longer has a separable scarcity charge. Until real-time
+    co-optimization went live overnight on 4-5 December 2025, scarcity was
+    priced by the Operating Reserve Demand Curve as an add-on calculated after
+    dispatch and bolted onto the energy price. The dispatch engine now clears
+    energy and reserves together against demand curves for each reserve
+    product, so scarcity value is inside the energy price rather than added to
+    it.
+    The change is visible in the settlement formula itself. The September 2025
+    zonal price read max(-$251, weighted LMP + RTRSVPOR + RTRDP), where
+    RTRSVPOR was the reserve adder term. The current formula reads
+    max(-$251, weighted LMP + RTRDP) - the reserve term is deleted. The adder
+    acronyms appear 69 times in the September 2025 text of Section 6 and zero
+    times in the current one, and they are no longer defined in the definitions
+    section at all.
+    The Operating Reserve Demand Curve itself survives, but only upstream: an
+    aggregate curve is fitted to historical reserve data and split into the
+    per-product demand curves the dispatch engine optimises against. It sets
+    prices from inside the optimisation instead of adjusting them afterwards.
+
+- id: ancillary_services__ercot
+  layer: ancillary_services
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per hour
+      definition: >
+        The QSE's adjusted metered withdrawal over the operating hour,
+        truncated at zero in each of its zones. Numerator of the hourly load
+        ratio share that finally determines the charge.
+  base_note: >
+    An earlier version of this record said the base was lagged. It is not, and
+    the correction matters.
+    A lagged share does appear, but only at the start. The day before the
+    operating day ERCOT tells each QSE its provisional obligation using a
+    share taken from the same hour on the most recent settled comparable day.
+    That figure drives the initial day-ahead charge. It is then reversed out:
+    the day-ahead cost is recalculated on the QSE's actual real-time hourly
+    share, and the difference is settled. Anything procured in real time is
+    allocated on the contemporaneous fifteen-minute share as well.
+    So the historical share determines what a QSE is told to expect and what
+    it is billed provisionally, but not what it ends up paying. Final incidence
+    falls on consumption during the hour being billed. A load that reduces
+    consumption in a costly hour does reduce that hour's charge.
+  measurement_window: >
+    The Operating Hour being billed, once the day-ahead settlement has been
+    recalculated. The provisional obligation notice issued the day before uses
+    an earlier comparable day, but that vintage does not survive settlement.
+  billing_window: >
+    The same Operating Hour.
+  determinacy: contemporaneous
+  pool: >
+    The day-ahead cost of procuring each ancillary service for the hour - what
+    ERCOT paid resources for that product plus the associated offer amounts -
+    together with the net cost of real-time ancillary service payments and
+    charges.
+  rate: '\Phi^{k}_{e,t} \;=\; \sum_{a \in \mathcal{A}} \Big[\underbrace{\pi_{a,t}\big(R_{a,t}\,\mathrm{LRS}^{\mathrm{RT}}_{e,t} - \mathrm{SA}_{e,a,t}\big)}_{\text{day-ahead, recalculated}} \;+\; \underbrace{C^{k,\mathrm{RT}}_{a,t}\,\mathrm{LRS}^{\mathrm{RT}}_{e,t}}_{\text{real-time}}\Big] \qquad \pi_{a,t} \;=\; \frac{C^{k,\mathrm{DA}}_{a,t}}{\sum_{e^{\prime} \in \mathcal{E}}\big(R_{a,t}\,\mathrm{LRS}^{\mathrm{RT}}_{e^{\prime},t} - \mathrm{SA}_{e^{\prime},a,t}\big)} \qquad \mathrm{LRS}^{\mathrm{RT}}_{e,t} \;=\; \frac{x^{k}_{e,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},t}}'
+  rate_type: average_cost
+  rate_derived: true
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: >
+        The QSE's total ancillary services charge for the hour across all
+        products. The protocol writes each component with a leading minus sign,
+        its settlement convention for money owed to ERCOT.
+    - symbol: '\mathcal{A}'
+      unit: —
+      definition: >
+        The set of five products currently in force - Regulation Up, Regulation
+        Down, Responsive Reserve, Non-Spinning Reserve and ERCOT Contingency
+        Reserve Service. A sixth, Dispatchable Reliability Reserve Service, is written
+        into the protocols but sits behind a pending implementation flag and is
+        not yet charged.
+    - symbol: '\pi_{a,t}'
+      unit: $/MW
+      definition: >
+        The price charged for product a. Total procurement cost over total
+        obligated quantity - an average, not the marginal clearing price. The
+        protocol names it separately for each product; this is a generalisation
+        across the five provisions, not a symbol that appears in the tariff.
+    - symbol: 'R_{a,t}'
+      unit: MW
+      definition: >
+        Quantity of product a ERCOT decided to buy for the hour. Set
+        administratively, not by the QSE.
+    - symbol: '\mathrm{LRS}^{\mathrm{RT}}_{e,t}'
+      unit: —
+      definition: >
+        Real-time hourly Load Ratio Share. The superscript is the whole point -
+        this is the contemporaneous share, and it replaces the historical one
+        used for the provisional notice.
+    - symbol: '\mathrm{SA}_{e,a,t}'
+      unit: MW
+      definition: Quantity the QSE arranged for itself rather than buying through ERCOT.
+    - symbol: 'C^{k,\mathrm{DA}}_{a,t}'
+      unit: $
+      definition: ERCOT's total day-ahead procurement cost for product a.
+    - symbol: 'C^{k,\mathrm{RT}}_{a,t}'
+      unit: $
+      definition: >
+        Net cost of real-time ancillary service payments and charges for
+        product a, allocated separately on the contemporaneous share.
+  exact_recovery: "yes"
+  true_up: >
+    Yes, and it is structural rather than incidental. The day-ahead charge
+    computed on the historical share is recalculated on the realised share and
+    the difference settled, so the provisional allocation is fully unwound.
+  redirect: null
+  source:
+    - document: ERCOT Nodal Protocols, Section 4 - Day-Ahead Operations
+      section: 4.2.1.2, Ancillary Service Obligation Assignment and Notice, para (1)
+      effective_date: 2026-08-01
+      quote: >
+        ERCOT shall base the QSE Ancillary Service allocation on the QSE to LSE
+        relationships for the operating date and on the hourly LSE LRSs from the
+        Real-Time Market (RTM) data used for Initial Settlement for the same
+        hour and day of the week, for the most recent day for which Initial
+        Settlement data is available, multiplied by the quantity of that service
+        required in the Day-Ahead Ancillary Service Plan.
+      url: https://www.ercot.com/files/docs/2024/06/28/04-080126_Nodal.docx
+    - document: ERCOT Nodal Protocols, Section 4 - Day-Ahead Operations
+      section: 4.6.4.2.1 to 4.6.4.2.5, Charges for Ancillary Services Procurement in the DAM
+      effective_date: 2026-08-01
+      quote: >
+        Each QSE shall pay to ERCOT or be paid by ERCOT a Reg-Up Service charge
+        for each hour as follows: DARUAMT q = DARUPR * DARUQ q Where: DARUPR =
+        (-1) * DAPCRUAMTTOT / DARUQTOT [...] DARUQ q = DARUO q - DASARUQ q
+      url: https://www.ercot.com/files/docs/2024/06/28/04-080126_Nodal.docx
+    - document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+      section: 6.7.1, Real-Time Settlement for Updated Day-Ahead Market Ancillary Service Obligations, para (1)
+      effective_date: 2026-08-01
+      quote: >
+        DAM net total costs for Ancillary Service procured in the DAM are
+        re-calculated for each QSE under this Section based on Real-Time Load
+        Ratio Share (LRS).
+      url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+    - document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+      section: 6.7.3, Real-Time Ancillary Service Revenue Neutrality Allocation, para (1)
+      effective_date: 2026-08-01
+      quote: >
+        The total cost for Real-Time Ancillary Service payments and charges is
+        allocated to the QSEs representing Load based on Load Ratio Share (LRS).
+      url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+  notes: >
+    The mechanism runs in four steps: a provisional obligation notice on a
+    historical share, a day-ahead charge on that obligation, a recalculation of
+    that charge on the realised real-time share, and a separate allocation of
+    real-time ancillary service costs on the contemporaneous share. Only the
+    first uses lagged data.
+    All five live products are allocated identically - the charge provisions are
+    the same formula with the acronym swapped, which is why this is one record
+    rather than five.
+    Procurement is competitive but the charge is not. ERCOT buys reserves in an
+    auction with a clearing price, then bills load the average cost of what it
+    bought, so load never faces the marginal price of reserves.
+    The determinant is measured at the scheduling entity, not the individual
+    load. For a load inside a retailer's portfolio, the truncation at zero and
+    the share are computed across the whole portfolio.
+
+- id: reactive_supply__ercot
+  layer: reactive_supply
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per 15-min interval
+      definition: >
+        The load's adjusted metered withdrawal for the interval, truncated at
+        zero in each of its zones before the zones are summed. This is the
+        numerator of the load ratio share.
+  base_note: null
+  measurement_window: >
+    The 15-minute Settlement Interval being billed.
+  billing_window: >
+    The same 15-minute Settlement Interval.
+  determinacy: contemporaneous
+  pool: >
+    Total payments to resources providing voltage support - both for supplying
+    reactive power and for the energy they gave up to do so.
+  rate: '\Phi^{k}_{e,t} \;=\; C^{k}_{t}\; \mathrm{LRS}_{e,t} \qquad\qquad \mathrm{LRS}_{e,t} \;=\; \frac{x^{k}_{e,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},t}}'
+  rate_type: average_cost
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: >
+        The load's voltage support charge for the interval. The protocol writes
+        this with a leading minus sign, which is its settlement-statement
+        convention for money owed to ERCOT.
+    - symbol: 'C^{k}_{t}'
+      unit: $
+      definition: The pool - total voltage support payments for the interval.
+  exact_recovery: "yes"
+  true_up: >
+    None needed. The shares sum to one by construction because the denominator
+    is the sum of the same truncated quantities that form each numerator.
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+    section: 6.6.7.2, Voltage Support Charge, para (1)
+    effective_date: 2026-08-01
+    quote: >
+      ERCOT shall charge each QSE representing LSEs the total payment for VSS
+      as specified in Section 6.6.7.1, Voltage Support Service Payments, based
+      on a LRS.
+    url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+  notes: >
+    A pure pass-through. Whatever ERCOT paid for voltage support in an interval
+    is divided among loads in proportion to their consumption in that same
+    interval.
+    Nothing in the determinant relates to reactive power. A load's reactive
+    behaviour, power factor, or location has no effect on what it pays - only
+    its share of real energy consumption does. The charge carries no signal
+    about the service it funds.
+
+- id: black_start__ercot
+  layer: black_start
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per hour
+      definition: >
+        The load's adjusted metered withdrawal over the operating hour,
+        truncated at zero in each of its zones. Numerator of the hourly load
+        ratio share.
+  base_note: null
+  measurement_window: >
+    The Operating Hour being billed.
+  billing_window: >
+    The same Operating Hour.
+  determinacy: contemporaneous
+  pool: >
+    Standby fees paid to generators contracted to restart the grid from a total
+    blackout.
+  rate: '\Phi^{k}_{e,t} \;=\; C^{k}_{t}\; \mathrm{LRS}_{e,t} \qquad\qquad \mathrm{LRS}_{e,t} \;=\; \frac{x^{k}_{e,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},t}}'
+  rate_type: average_cost
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: The load's black start charge for the hour.
+    - symbol: 'C^{k}_{t}'
+      unit: $
+      definition: The pool - total black start standby payments for the hour.
+  exact_recovery: "yes"
+  true_up: none
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+    section: 6.6.8.2, Black Start Capacity Charge, para (1)
+    effective_date: 2026-08-01
+    quote: >
+      ERCOT shall allocate the total Black Start Service Capacity payment to
+      the QSEs representing Loads based on a LRS.
+    url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+  notes: >
+    A standby service that is bought whether or not it is ever used, and the
+    cost of standing ready does not vary with how much anyone consumes in the
+    hour. Charging it on hourly consumption means a load can reduce its share
+    by consuming less at a moment when the underlying cost is entirely
+    unaffected by that choice. Structurally the same limiting case as system
+    administration: a fixed pool on a usage base.
+
+- id: emergency_response_service__ercot
+  layer: emergency_response_service
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_derived: true
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per service time period
+      definition: >
+        The entity's adjusted metered load over one of the service time periods
+        that make up a contract period. Numerator of the share for that period.
+    - symbol: 't'
+      unit: —
+      definition: >
+        A service time period - one of the recurring blocks of hours a contract
+        covers, not the whole contract term.
+  base_note: >
+    The protocol states the share rather than the determinant, defining it as
+    the entity's total load in the time period over total ERCOT load in the
+    same period. The numerator is written here in the truncated form used
+    everywhere else in the protocols so the record is comparable with the other
+    load-ratio layers, which is a reconstruction rather than quoted text.
+  measurement_window: >
+    Each service time period within the contract period, separately.
+  billing_window: >
+    The contract period, settled once and then resettled.
+  determinacy: contemporaneous
+  pool: >
+    Payments to demand-side resources contracted to curtail when the grid is
+    short. A voluntary programme procured in advance for a fixed term.
+  rate: '\Phi^{k}_{e} \;=\; \sum_{t \in \mathcal{P}} C^{k}_{t}\, \mathrm{LRS}_{e,t} \qquad\qquad \mathrm{LRS}_{e,t} \;=\; \frac{x^{k}_{e,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},t}}'
+  rate_type: average_cost
+  rate_derived: true
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e}'
+      unit: $
+      definition: The entity's emergency response service charge for the contract period.
+    - symbol: 'C^{k}_{t}'
+      unit: $
+      definition: The pool for one service time period.
+  exact_recovery: "yes"
+  true_up: >
+    Yes. Settled first on the latest available settlement load, then resettled
+    using trued-up load for every operating day in the contract period.
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+    section: 6.6.11.2, Emergency Response Service Capacity Charge, para (1)
+    effective_date: 2026-08-01
+    quote: >
+      ERCOT shall allocate costs for an ERS service type and ERS Contract
+      Period based on the LRS of each QSE during each ERS Time Period in an ERS
+      Contract Period. A QSE's LRS for an ERS Time Period shall be the QSE's
+      total Load for the ERS Time Period divided by the total ERCOT Load in the
+      ERS Time Period.
+    url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+  notes: >
+    ERCOT pays some loads to be available to curtail, and charges all loads for
+    it, so a load enrolled in the programme sits on both sides.
+    The allocation is narrower than most layers here. Rather than one
+    system-wide share, the cost of each service type is spread only across the
+    time periods that service actually covers, so a load consuming heavily
+    during the covered hours pays more of it. That ties the charge to the hours
+    the service is bought for more closely than any other pooled layer in this
+    inventory.
+
+- id: firm_fuel_supply__ercot
+  layer: firm_fuel_supply
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per hour
+      definition: >
+        The entity's adjusted metered withdrawal over the operating hour,
+        truncated at zero in each Load Zone before the zones are summed.
+  base_note: null
+  measurement_window: >
+    The Operating Hour being billed.
+  billing_window: >
+    The same Operating Hour.
+  determinacy: contemporaneous
+  pool: >
+    Standby fees and fuel replacement costs paid to generators that hold a
+    secured fuel supply on site so they can run when gas delivery fails.
+  rate: '\Phi^{k}_{e,t} \;=\; C^{k}_{t}\; \mathrm{LRS}_{e,t} \qquad\qquad \mathrm{LRS}_{e,t} \;=\; \frac{x^{k}_{e,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},t}}'
+  rate_type: average_cost
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: The entity's firm fuel supply charge for the hour.
+    - symbol: 'C^{k}_{t}'
+      unit: $
+      definition: The pool - total firm fuel supply payments for the hour.
+  exact_recovery: "yes"
+  true_up: none
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+    section: 6.6.14.3, Firm Fuel Supply Service Capacity Charge, para (1)
+    effective_date: 2026-08-01
+    quote: >
+      ERCOT shall allocate the total FFSS capacity and fuel replacement payment
+      to the QSEs representing Loads based on an hourly LRS.
+    url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+  notes: >
+    Created after the February 2021 winter storm, when gas supply to generators
+    failed at the same time as demand peaked. Load pays generators to keep fuel
+    physically on site.
+    Another standby service billed on hourly consumption: the cost of holding
+    fuel in reserve does not vary with how much anyone consumes in a given
+    hour, but the share deciding who pays for it does.
+
+- id: uplift__ercot
+  layer: uplift
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per 15-min interval
+      definition: >
+        The load's adjusted metered withdrawal for the interval, truncated at
+        zero in each of its zones. Numerator of the load ratio share.
+  base_note: >
+    The determinant has nothing to do with why the cost arose. This layer only
+    exists to collect what the shortfall-based charge could not, and it does so
+    on ordinary consumption.
+  measurement_window: >
+    The 15-minute Settlement Interval being billed.
+  billing_window: >
+    The same 15-minute Settlement Interval.
+  determinacy: contemporaneous
+  pool: >
+    Make-whole payments to units committed by ERCOT for reliability, including
+    reliability-must-run units, less whatever was already recovered from
+    capacity-short QSEs.
+  rate: '\Phi^{k}_{e,t} \;=\; \left(\frac{C^{k,\mathrm{tot}}_{t}}{4} \;-\; C^{k,\mathrm{short}}_{t}\right) \mathrm{LRS}_{e,t} \qquad\qquad \mathrm{LRS}_{e,t} \;=\; \frac{x^{k}_{e,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},t}}'
+  rate_type: average_cost
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: The load's share of the uncovered make-whole cost for the interval.
+    - symbol: 'C^{k,\mathrm{tot}}_{t}'
+      unit: $ per hour
+      definition: >
+        Total make-whole payments for all reliability commitment processes in
+        the hour containing this interval. The division by four in the formula
+        is what brings it down to the interval.
+    - symbol: 'C^{k,\mathrm{short}}_{t}'
+      unit: $
+      definition: >
+        What was already collected from capacity-short QSEs in the interval -
+        see the RUC Capacity Short record.
+  exact_recovery: "yes"
+  true_up: >
+    None needed. This layer is itself the true-up - it exists to close whatever
+    gap the capacity-short charge leaves.
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 5 - Transmission Security Analysis and Reliability Unit Commitment
+    section: 5.7.4.2, RUC Make-Whole Uplift Charge, para (1)
+    effective_date: 2026-08-01
+    quote: >
+      If the revenues from the charges under Section 5.7.4.1, RUC
+      Capacity-Short Charge, are not enough to cover all RUC Make-Whole
+      Payments, including amounts for RMR Units, for a 15-minute Settlement
+      Interval, then the difference will be uplifted to all QSEs on a Load
+      Ratio Share basis.
+    url: https://www.ercot.com/files/docs/2024/06/28/05-080126_Nodal.docx
+  notes: >
+    The second tier of a two-tier mechanism. ERCOT first tries to charge the
+    QSEs that were short of capacity, then spreads whatever is left over all
+    load by consumption.
+    The two tiers point in opposite directions. The first is targeted and
+    avoidable - a QSE can escape it by arranging capacity. The second is
+    untargeted and can only be avoided by consuming less, at a moment when
+    consumption had nothing to do with the cost. How much of the pool ends up
+    in each tier depends on the cap in the first tier, so an administrative
+    parameter decides how much of the cost is targeted and how much socialised.
+
+- id: capacity_obligation__ercot
+  layer: capacity_obligation
+  market: ercot
+  status: absent
+  payer: qse
+  base: null
+  base_type: null
+  base_note: null
+  measurement_window: null
+  billing_window: null
+  determinacy: contemporaneous
+  pool: null
+  rate: null
+  rate_type: null
+  exact_recovery: "n/a"
+  true_up: none
+  redirect: null
+  source:
+    document: 16 Tex. Admin. Code §25.501, Wholesale Market Design for the Electric Reliability Council of Texas (PUCT Substantive Rules)
+    section: (b), Bilateral markets and default provision of energy and ancillary capacity services
+    effective_date: 2012-04-18
+    quote: >
+      ERCOT shall permit market participants to self-arrange (self-schedule or
+      bilaterally contract for) energy and ancillary capacity services, except
+      to the extent that doing so would adversely impact ERCOT's ability to
+      maintain reliability. To the extent that a market participant does not
+      self-arrange the energy and ancillary capacity services necessary to meet
+      its obligations [...] ERCOT shall procure energy and ancillary capacity
+      services on behalf of the market participant to cover the shortfall and
+      charge the market participant for the services provided.
+    url: https://ftp.puc.texas.gov/public/puct-info/agency/rulesnlaws/subrules/electric/25.501/25.501.pdf
+  notes: >
+    ERCOT has no capacity market and places no capacity obligation on load, so
+    there is nothing to charge and no determinant to record. Price stands in its
+    place: resource adequacy is meant to come from energy and reserve prices
+    rising high enough in tight conditions to attract investment. The market
+    design rule lists what ERCOT procures - energy and ancillary services - and
+    no capacity product appears in it. The companion resource adequacy rule
+    requires only a five-year adequacy forecast and creates no obligation on
+    anyone.
+
+- id: transmission_network_service__ercot
+  layer: transmission_network_service
+  market: ercot
+  status: present
+  payer: dsp
+  base: 'x^{k}_{e,y} \;=\; \frac{1}{4}\sum_{m \,\in\, \mathcal{M}} d_{e,\;t_{m}(y-1)} \qquad\qquad t_{m}(y-1) \;=\; \arg\max_{\,t \,\in\, \mathcal{T}_{m,y-1}} \; \sum_{e^{\prime} \in \mathcal{E}} d_{e^{\prime},t}'
+  base_type: coincident_peak
+  base_definitions:
+    - symbol: 'x^{k}_{e,y}'
+      unit: MW, averaged over 4 intervals
+      definition: >
+        The entity's average demand across the four peak intervals. A demand
+        level, not energy - which is why the measurement window alone does not
+        tell you the unit. One number per year; it does not vary by month.
+    - symbol: 'd_{e,t}'
+      unit: MW
+      definition: >
+        Demand of entity e during interval t. Load served by wholesale storage
+        is excluded from the count.
+    - symbol: 't_{m}(y-1)'
+      unit: —
+      definition: >
+        The interval in month m at which total ERCOT demand was highest. Set by
+        everyone else's aggregate demand, not by yours, and only identifiable
+        after the month has passed.
+    - symbol: 'y'
+      unit: —
+      definition: >
+        The billing year. The four intervals occur during the summer of year
+        y-1, are filed by ERCOT that December, and then bill throughout year y.
+  base_note: >
+    The rule does not say how long these intervals are; it defers that to
+    ERCOT's own protocols. Not recorded here because it was not read from
+    protocol text.
+  measurement_window: >
+    Measured across four intervals - the peak of total ERCOT demand in each of
+    June, July, August and September. Those intervals happen, and are
+    identified, during that summer itself. ERCOT files the resulting figures by
+    1 December, and they then bill in every one of the twelve months of the
+    following calendar year, unchanged. A single summer's behaviour is frozen
+    into a full year of charges paid afterwards.
+  billing_window: >
+    Every month of the following calendar year - twelve charges from one summer's measurements.
+  determinacy: retrospective
+  pool: >
+    The transmission owner's approved cost of service - its transmission
+    operating expenses, plus depreciation and other costs assigned to the
+    transmission function.
+  rate: '\Phi^{k}_{e,y} \;=\; r_{y}\, x^{k}_{e,y} \qquad\qquad r_{y} \;=\; \frac{C^{k}}{X^{k}_{y}} \qquad\qquad X^{k}_{y} \;=\; \frac{1}{4}\sum_{m \,\in\, \mathcal{M}}\;\sum_{e^{\prime} \in \mathcal{E}} d_{e^{\prime},\;t_{m}(y-1)}'
+  rate_type: average_cost
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,y}'
+      unit: $
+      definition: The entity's transmission charge for the year. Billed in twelve monthly instalments.
+    - symbol: 'C^{k}'
+      unit: $ per year
+      definition: >
+        The transmission owner's approved cost of service - the pool being
+        recovered. Fixed at the last rate case and not refreshed alongside the
+        billing determinants, which is why recovery is not exact.
+    - symbol: 'd_{e,t}'
+      unit: MW
+      definition: >
+        Demand of entity e during interval t - the same quantity the base
+        measures, reused here to build the denominator.
+    - symbol: 'X^{k}_{y}'
+      unit: MW
+      definition: >
+        Total demand across all billed entities over the same four peak
+        intervals, divided by four. Turns the pool into a per-MW rate.
+    - symbol: 'r_{y}'
+      unit: $/MW per year
+      definition: >
+        The resulting annual rate. The rule directs that it be converted to a
+        monthly figure and billed in twelve instalments but does not specify
+        the divisor, so only the annual form is recorded.
+  exact_recovery: "no"
+  true_up: >
+    None within a year, and none on billing-unit variance at all. The rate stays
+    in force until a new one is approved, so any shortfall or surplus is settled
+    in the next rate case rather than trued up as it accrues.
+  redirect: null
+  source:
+    - document: 16 Tex. Admin. Code §25.192, Transmission Service Rates (PUCT Substantive Rules)
+      section: (b)(1) rate and charge; (d) billing units
+      effective_date: 2022-12-20
+      quote: >
+        A TSP's transmission rate shall be calculated as its commission-approved
+        transmission cost of service divided by the average of ERCOT coincident
+        peak demand for the months of June, July, August and September (4CP),
+        excluding the portion of coincident peak demand attributable to
+        wholesale storage load. [...] The monthly transmission service charge
+        to be paid by
+        each DSP is the product of each TSP's monthly rate as specified in its
+        tariff and the DSP's previous year's average of the 4CP demand that is
+        coincident with the ERCOT 4CP. [...] A TSP's transmission rate shall
+        remain in effect until the commission approves a new rate. The TSP's
+        annual rate shall be converted to a monthly rate. [...] No later than
+        December 1 of each year, ERCOT shall determine and file with the
+        commission the current year's average 4CP demand for each DSP [...]
+        This demand shall be used to bill transmission service for the next
+        year.
+      url: https://ftp.puc.texas.gov/public/puct-info/agency/rulesnlaws/subrules/electric/25.192/25.192.pdf
+    - document: ERCOT Nodal Protocols, Section 9 - Settlement and Billing
+      section: 9.17, Transmission Billing Determinant Calculation, para (1)
+      effective_date: 2026-08-01
+      quote: >
+        ERCOT shall provide Market Participants with the key parameters and
+        formula components required by a Transmission Service Provider (TSP) or
+        Distribution Service Provider (DSP) in determining the billing charges
+        for the use of its Transmission Facilities or Distribution Facilities
+        ("Transmission Billing Determinants"). ERCOT is not responsible for
+        billing, collection, or disbursal of payments associated with
+        transmission access service.
+      url: https://www.ercot.com/files/docs/2023/06/01/09-080126_Nodal.docx
+  notes: >
+    A year of transmission charges turns on demand during four intervals, and
+    those intervals are only identifiable after the fact. This is the sharpest
+    incentive in the inventory: avoiding load during four moments out of roughly
+    thirty-five thousand determines an entire year's bill.
+    The timing runs forward, not backward. The peaks are set during the summer
+    as it happens; ERCOT files the figures by 1 December; the charges are then
+    paid across the following twelve months. Nothing is chosen retrospectively -
+    the determinant is fixed by behaviour in real time and then billed later.
+    This makes the layer unusual in one respect: the load acts long before it
+    can know whether the action mattered, because whether a given interval turns
+    out to be the monthly peak depends on the whole system's demand.
+    At the time of this extraction - August 2026 - the June and July 2026 peaks
+    have already occurred and are locked in, and the August and September ones
+    have not. Consumption in the coming weeks is setting transmission charges
+    payable throughout 2027.
+    The mechanism is not in an ERCOT tariff. It sits in a state regulator's
+    rule, and ERCOT's protocols disclaim responsibility for billing, collecting
+    or disbursing transmission payments - ERCOT only calculates and files the
+    underlying quantities.
+    Recovery is not exact. The rate stays in force until the commission
+    approves a new one, so its denominator is frozen at the peak demand assumed
+    in the last rate case, while the billing determinant is refreshed every year
+    from the most recent summer. Collections are the cost of service scaled by
+    the ratio of realised peak demand to the assumed figure, so in a market
+    adding load the layer over-recovers, and the faster load grows the more it
+    over-recovers. Nothing in the rule reconciles the difference as it accrues;
+    it is picked up whenever the next rate case happens.
+    Two caveats. The charge falls on distribution utilities rather than on
+    individual loads, so how it reaches any particular load is a retail
+    question. And a pending rulemaking proposes replacing four peak intervals
+    with twelve; as of this extraction the rule still says four and the
+    proceeding is undecided.
+
+- id: interconnection_upgrade_assignment__ercot
+  layer: interconnection_upgrade_assignment
+  market: ercot
+  status: present
+  payer: qse
+  base: TODO
+  base_type: TODO
+  base_note: null
+  measurement_window: TODO
+  billing_window: null
+  determinacy: contemporaneous
+  pool: TODO
+  rate: TODO
+  rate_type: TODO
+  exact_recovery: TODO
+  true_up: TODO
+  redirect: null
+  source: {document: TODO, section: TODO, effective_date: TODO, quote: TODO, url: TODO}
+  notes: >
+    Deliberately left unfilled. This is the layer closest to the large-load
+    question and the only one in the inventory with no settled rule to cite.
+    A new state rule, 16 TAC §25.194, would set interconnection standards for
+    loads of 75 MW and above in ERCOT, implementing legislation passed in June
+    2025. It was proposed in March 2026 and, as of this extraction in August
+    2026, has not been adopted - there is no rule text at the location where
+    every other adopted rule in this chapter is published. Reported figures for
+    interconnection fees and financial security come from the proposal, not
+    from an operative rule, so recording them would breach the sourcing
+    standard.
+    A second and more consequential proposal is further along. Under PUCT
+    Project No. 58000, published for comment in July 2026 with comments due 11
+    August 2026, a proposed new rule §25.252 would set tariff terms for large
+    load customers. As proposed it would replace the four summer peaks with
+    twelve monthly ones measured over 30-minute intervals, and - the part that
+    matters here - set a minimum billing demand equal to the greatest of the
+    customer's contracted peak, its highest non-coincident demand in the prior
+    year, and its measured coincident-peak demand, payable monthly for 240
+    consecutive months and starting when reserved capacity becomes available
+    whether or not the facility is drawing power.
+    If adopted in that form it would be the first ERCOT layer whose determinant
+    is contracted capacity rather than metered consumption, and the only one a
+    load cannot reduce by changing behaviour at all. It is the single most
+    relevant pending item in Texas for a flexible-load argument. It is not
+    recorded as a layer because it is a proposal, not an operative rule.
+
+- id: regional_project_cost_allocation__ercot
+  layer: regional_project_cost_allocation
+  market: ercot
+  status: absorbed
+  payer: dsp
+  base: null
+  base_type: null
+  base_note: null
+  measurement_window: null
+  billing_window: null
+  determinacy: contemporaneous
+  pool: null
+  rate: null
+  rate_type: null
+  exact_recovery: "n/a"
+  true_up: none
+  redirect: transmission_network_service__ercot
+  source:
+    document: 16 Tex. Admin. Code §25.192, Transmission Service Rates (PUCT Substantive Rules)
+    section: (c), Transmission cost of service
+    effective_date: 2022-12-20
+    quote: >
+      The transmission cost of service for each TSP shall be based on the
+      expenses in Federal Energy Regulatory Commission (FERC) expense accounts
+      560-573 (or accounts with similar contents or amounts functionalized to
+      the transmission function) plus the depreciation [...]
+    url: https://ftp.puc.texas.gov/public/puct-info/agency/rulesnlaws/subrules/electric/25.192/25.192.pdf
+  notes: >
+    ERCOT sits outside federal jurisdiction, so it has no separate regional
+    cost allocation process and no beneficiary-pays test for new transmission.
+    A project's costs enter the building utility's cost of service and are
+    recovered through the ordinary peak demand charge alongside everything else
+    that utility owns.
+    The effect is that new transmission is paid for on the same four peak
+    intervals as existing transmission, regardless of who the project was built
+    for or who benefits from it. There is no determinant that distinguishes a
+    load driving new construction from one that is not.
+
+- id: rmr__ercot
+  layer: rmr
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per hour
+      definition: >
+        The load's adjusted metered withdrawal over the operating hour,
+        truncated at zero in each of its zones. Numerator of the hourly load
+        ratio share.
+  base_note: null
+  measurement_window: >
+    The Operating Hour being billed.
+  billing_window: >
+    The same Operating Hour.
+  determinacy: contemporaneous
+  pool: >
+    The net cost of keeping units running that the market would otherwise have
+    retired - standby payments, energy costs and non-performance amounts, less
+    what those units earned in the market anyway.
+  rate: '\Phi^{k}_{e,t} \;=\; \left(C^{k,\mathrm{sb}}_{t} + C^{k,\mathrm{en}}_{t} - C^{k,\mathrm{adj}}_{t} + \frac{C^{k,\mathrm{np}}_{t}}{\mathrm{HRS}}\right)\mathrm{LRS}_{e,t} \qquad\qquad \mathrm{LRS}_{e,t} \;=\; \frac{x^{k}_{e,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},t}}'
+  rate_type: average_cost
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: The load's reliability-must-run charge for the hour.
+    - symbol: 'C^{k,\mathrm{sb}}_{t}'
+      unit: $
+      definition: Standby payments to all must-run units for the hour.
+    - symbol: 'C^{k,\mathrm{en}}_{t}'
+      unit: $
+      definition: Energy cost payments to those units for the hour.
+    - symbol: 'C^{k,\mathrm{adj}}_{t}'
+      unit: $
+      definition: >
+        What the units earned from the market anyway. Entered with a minus sign,
+        so load pays only the incremental cost of the arrangement.
+    - symbol: 'C^{k,\mathrm{np}}_{t}'
+      unit: $
+      definition: Non-performance amounts, spread over H hours.
+    - symbol: '\mathrm{HRS}'
+      unit: —
+      definition: >
+        The number of hours the non-performance amount is spread across. A
+        count, not a duration, so the division leaves dollars.
+  exact_recovery: "yes"
+  true_up: none
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+    section: 6.6.6.5, RMR Service Charge, para (1)
+    effective_date: 2026-08-01
+    quote: >
+      The total RMR cost for all RMR Units is allocated to the QSEs
+      representing Loads based on LRS. [...] The amount charged to the QSE based
+      on its LRS of the difference between the amount paid to all QSEs for RMR
+      Service under Section 6.6.6, Reliability Must-Run Settlement, and the
+      amount that would have been paid to the QSEs for the same RMR Units if
+      they were not providing RMR Service.
+    url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+  notes: >
+    The pool is netted before allocation - load pays the difference between what
+    the unit receives under the arrangement and what it would have earned
+    without it, not the gross payment. That is a genuinely cost-causal
+    construction of the pool.
+    The base is not. Must-run units are retained to solve a specific local
+    reliability problem, but the cost is spread across all ERCOT load by
+    consumption share, so a load in the constrained area pays the same rate as
+    one hundreds of miles away. The locational information that motivated the
+    contract is discarded at the allocation step.
+
+- id: iso_admin__ercot
+  layer: iso_admin
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per 15-min interval
+      definition: >
+        The load's adjusted metered withdrawal for the interval, truncated at
+        zero separately in each of its zones before the zones are summed.
+    - symbol: '\mathcal{Z}_{e}'
+      unit: —
+      definition: >
+        The Load Zones in which this entity serves load. The truncation is
+        applied within each of them before they are summed, so a negative
+        position in one zone cannot offset a positive one in another.
+  base_note: >
+    The charge is levied on max(0, load), not on load. A payer whose metered
+    load in one of its zones comes out negative in an interval - which happens
+    when on-site generation exceeds consumption - pays nothing there rather than
+    receiving a credit. The charge stops falling once consumption reaches zero
+    and does not turn into a payment beyond it.
+  measurement_window: >
+    The 15-minute Settlement Interval being billed.
+  billing_window: >
+    The same 15-minute Settlement Interval.
+  determinacy: contemporaneous
+  pool: >
+    ERCOT's operating budget, as approved by the state regulator. The protocol
+    treats the fee as given rather than deriving it from a revenue requirement.
+  rate: '\Phi^{k}_{e,t} \;=\; \mathrm{LAFF} \cdot x^{k}_{e,t}'
+  rate_type: posted
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: The load's system administration charge for the interval.
+    - symbol: '\mathrm{LAFF}'
+      unit: $/MWh
+      definition: >
+        Load Administration Fee Factor - the system administration fee itself.
+        A single published number, changed only when the regulator approves a
+        new one.
+  exact_recovery: "no"
+  true_up: >
+    None. The fee changes only going forward, on regulatory approval. Nothing
+    reconciles what was collected against what ERCOT actually spent.
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 9 - Settlement and Billing
+    section: 9.16.1, ERCOT System Administration Fee
+    effective_date: 2026-08-01
+    quote: >
+      The Public Utility Commission of Texas (PUCT) has authorized ERCOT to
+      charge the ERCOT System Administration fee to fund ERCOT's budget. ERCOT
+      converts the fee into a charge to each Qualified Scheduling Entity (QSE)
+      using the formula set forth in paragraph (3) below. [...] Each QSE shall
+      pay the ERCOT System Administration fee. The ERCOT System Administration
+      fee is for each 15-minute Settlement Interval for each QSE.
+      ESACAMT q = LAFF * SUM over p of max(0, RTAML q, p) [...]
+      LAFF | $/MWh | Load Administration Fee Factor - The ERCOT System
+      Administration fee. [...] p | none | A Settlement Point. The summation is
+      over all of the Settlement Points.
+    url: https://www.ercot.com/files/docs/2023/06/01/09-080126_Nodal.docx
+  notes: >
+    A near-fixed pool recovered on a usage base, which makes almost the entire
+    charge unrelated to what any individual load costs the system. Small money,
+    but the cleanest example of the pattern.
+    Also a posted rate with no true-up. Collections equal the fee times whatever
+    load turns out to be, which has no reason to match ERCOT's budget in any
+    year. The error is absorbed by resetting the fee later.
+    The charge falls on scheduling entities rather than on loads directly; how
+    it is passed through is a contractual matter outside the wholesale rules.
+
+- id: arr_ftr_allocation__ercot
+  layer: arr_ftr_allocation
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per month
+      definition: >
+        The load's adjusted metered withdrawal over the month, truncated at zero
+        per settlement point. Numerator of the monthly load ratio share.
+  base_note: null
+  measurement_window: >
+    Measured and credited monthly. Trued up after final settlement for the month.
+  billing_window: >
+    The same calendar month.
+  determinacy: contemporaneous
+  pool: >
+    Net revenue ERCOT collects from selling congestion revenue rights at
+    auction, including the proceeds of rights pre-assigned to municipal and
+    cooperative utilities.
+  rate: '\Phi^{k}_{e,t} \;=\; -\left(C^{k,\mathrm{zon}}_{z,t}\, \mathrm{LRS}^{z}_{e,t} \;+\; C^{k,\mathrm{sys}}_{t}\, \mathrm{LRS}_{e,t}\right) \qquad\qquad \mathrm{LRS}^{z}_{e,t} \;=\; \frac{x^{k}_{e,z,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},z,t}}'
+  rate_type: average_cost
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: >
+        The load's share of auction revenue. Negative because this is a credit -
+        money flowing to the load rather than from it.
+    - symbol: 'C^{k,\mathrm{zon}}_{z,t}'
+      unit: $
+      definition: >
+        Auction revenue from rights that both start and end inside zone z,
+        shared only among entities with load in that zone.
+    - symbol: 'C^{k,\mathrm{sys}}_{t}'
+      unit: $
+      definition: >
+        Auction revenue from every other right - those whose path crosses a
+        zone boundary. Shared across all of ERCOT.
+    - symbol: '\mathrm{LRS}^{z}_{e,t}'
+      unit: —
+      definition: >
+        The zonal load ratio share - the entity's fraction of load inside zone z
+        alone rather than of ERCOT-wide load. The superscript is what separates
+        it from the system-wide share applied to the other pool.
+    - symbol: 'x^{k}_{e,z,t}'
+      unit: MWh per month
+      definition: The entity's truncated metered load inside zone z over the month.
+  exact_recovery: "yes"
+  true_up: >
+    Yes. Distributed monthly on initial settlement data, then trued up after
+    final settlement.
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 7 - Congestion Revenue Rights
+    section: 7.5.7, Method for Distributing CRR Auction Revenues, para (2)
+    effective_date: 2025-12-05
+    quote: >
+      ERCOT shall credit the net CRR Auction revenue (including PCRR revenue)
+      produced from CRRs cleared in each CRR Auction that source from a
+      Settlement Point located within a 2003 ERCOT CMZ and sink at a Settlement
+      Point located within the same 2003 ERCOT CMZ to [QSEs] on a zonal Load
+      Ratio Share (LRS) basis. All other net CRR Auction revenues must be
+      allocated to QSEs on an ERCOT-wide LRS basis.
+    url: https://www.ercot.com/files/docs/2021/08/01/07-120525_Nodal.docx
+  notes: >
+    A credit, so the sign is reversed, but structurally an ordinary allocation:
+    a pool divided by consumption share.
+    The zonal split is the only place in this inventory where a pooled layer
+    keeps any locational information - revenue from rights that begin and end
+    inside one zone stays with that zone's load. The zone boundaries used are
+    the congestion zones as they stood in 2003, which no longer correspond to
+    how the network is managed.
+    Note also that this credit is allocated on consumption while the congestion
+    charges it offsets are priced at a zonal average. A load's credit and the
+    congestion it actually causes are therefore determined by different things.
+
+- id: loss_congestion_surplus_credit__ercot
+  layer: loss_congestion_surplus_credit
+  market: ercot
+  status: present
+  payer: qse
+  base: 'x^{k}_{e,t} \;=\; \sum_{z \,\in\, \mathcal{Z}_{e}} \max\!\left(0,\;\; \mathrm{AML}_{e,z,t}\right)'
+  base_type: metered_energy
+  base_definitions:
+    - symbol: 'x^{k}_{e,t}'
+      unit: MWh per 15-min interval
+      definition: >
+        The load's adjusted metered withdrawal for the interval, truncated at
+        zero in each of its zones. Numerator of the load ratio share.
+  base_note: null
+  measurement_window: >
+    Measured and settled over the same 15-minute Settlement Interval. No lag.
+  billing_window: >
+    The same 15-minute Settlement Interval.
+  determinacy: contemporaneous
+  pool: >
+    Whatever the real-time market fails to balance in an interval - the net of
+    all energy imbalance payments and charges, DC tie and block load transfer
+    payments, self-schedule congestion, and payments to congestion right
+    holders. Can be a surplus or a shortfall.
+  rate: '\Phi^{k}_{e,t} \;=\; -\,C^{k}_{t}\; \mathrm{LRS}_{e,t} \qquad\qquad \mathrm{LRS}_{e,t} \;=\; \frac{x^{k}_{e,t}}{\sum_{e^{\prime} \in \mathcal{E}} x^{k}_{e^{\prime},t}} \qquad\qquad C^{k}_{t} \;=\; \sum_{v \in \mathcal{V}} \left(\mathrm{PAY}_{v,t} - \mathrm{CHG}_{v,t}\right)'
+  rate_type: average_cost
+  rate_definitions:
+    - symbol: '\Phi^{k}_{e,t}'
+      unit: $
+      definition: >
+        The entity's share of the residual. The leading minus sign means load
+        is credited when ERCOT takes in more than it pays out, and charged when
+        it pays out more than it takes in.
+    - symbol: 'C^{k}_{t}'
+      unit: $
+      definition: >
+        The net imbalance for the interval. Positive when ERCOT paid out more
+        than it took in, which is the case that produces a charge to load.
+    - symbol: '\mathcal{V}'
+      unit: —
+      definition: >
+        The set of eight real-time money flows enumerated in 6.6.10(1) - the
+        three energy imbalance settlements, DC tie imports, block load
+        transfers, settlement-only generation, self-schedule congestion, and
+        payments to congestion right holders.
+    - symbol: '\mathrm{PAY}_{v,t}'
+      unit: $
+      definition: What ERCOT paid out on flow v during the interval.
+    - symbol: '\mathrm{CHG}_{v,t}'
+      unit: $
+      definition: What ERCOT took in on flow v during the interval.
+  rate_derived: true
+  exact_recovery: "yes"
+  true_up: >
+    None needed. This layer is the true-up for the market as a whole - it is
+    defined as whatever is left over, so it closes by construction.
+  redirect: null
+  source:
+    document: ERCOT Nodal Protocols, Section 6 - Adjustment Period and Real-Time Operations
+    section: 6.6.10, Real-Time Revenue Neutrality Allocation, paras (1) and (2)
+    effective_date: 2026-08-01
+    quote: >
+      ERCOT must be revenue-neutral in each Settlement Interval. Each QSE
+      receives an allocated share, on a LRS basis, of the net amount of:
+      [Real-Time Energy Imbalance payments or charges at a Resource Node, a
+      Load Zone and a Hub; DC Tie import payments; Block Load Transfer Point
+      payments; SODG and SOTG energy; Real-Time congestion payments or charges
+      for Self-Schedules; and Real-Time payments or charges to the Congestion
+      Revenue Right (CRR) Owners].
+    url: https://www.ercot.com/files/docs/2024/06/28/06-080126_Nodal.docx
+  notes: >
+    The market's plug. Prices are set by an optimisation that has no reason to
+    make money in equal money out, and this layer sweeps up the difference every
+    fifteen minutes and shares it by consumption.
+    It is the clearest case in the inventory of a pool with no cost behind it at
+    all. The residual is an artefact of how prices were formed - congestion
+    rents, the gap between zonal and nodal settlement, payments to rights
+    holders - not a resource anyone bought. Yet it is allocated on the same
+    determinant as everything else.
+    The sign is not fixed. In intervals when the market over-collects, load is
+    paid; when it under-collects, load pays. Both directions land on the same
+    base, so the layer adds variance to a load's bill that is unrelated to
+    anything the load did.
