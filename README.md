@@ -8,24 +8,26 @@ efficiency, alignment, recovery, fairness.
 
 The model is specified in the memo (`wargame_master.tex` in the Overleaf
 project); this package transcribes it. Symbols keep their letters, words keep
-their words; `CLAUDE.md` holds the notation table and the design decisions.
+their words; `CLAUDE.md` holds the notation table and the design decisions. Four modules: `system` (ω, 𝓜), `tariff` (τ), `load` (θ, R, B1), `metrics`. Every formula is a cvxpy expression; read numbers with `.value`.
 
 ```python
+from dataclasses import replace
+
+import numpy as np
 import flexload as fl
 
-scenario = fl.build_scenario(week=31, alpha=0.05)          # ω and δ from RTS-GMLC
-market = fl.Market(reserve="ercot")                         # or "pjm"
-tariffs = fl.named_tariffs(scenario)                        # tau_0 ... tau_6
-theta = fl.named_types(scenario.T)["mover"]
-tau = tariffs["tau_0"]
+weeks = fl.periods(T=168, alpha=0.05, reserve_margin=0.10)  # ω and δ, the year in weeks
+scenario = weeks[31]
+market = fl.Market(reserve="ercot")                          # or "pjm"
+market = replace(market, missing_money=fl.missing_money(market, weeks))  # annual Ĉⁱⁿᵛ, cached
+tau = fl.named_tariffs(scenario)["tau_0"]                    # today's tariff
+theta = fl.named_types(scenario.T)["mover"]                  # a load type
 
-c_s = fl.c_s(theta, scenario.delta)
-base = market.clear(scenario, tau, scenario.delta, np.zeros(scenario.T), c_s)   # B0
-C_res, C_inv = market.pools(base, scenario)
-d, sigma = fl.best_response(theta, tau, scenario.delta, base.lam, base.mu,
-                            C_res, C_inv, scenario.d_other, d_hat=scenario.delta)
-dispatch = market.clear(scenario, tau, d, sigma, c_s)
-bill = tau.bill(dispatch.d, dispatch.sigma, dispatch.lam, dispatch.mu, C_res, C_inv, scenario.d_other)
+offer = fl.c_s(theta, scenario.delta)
+b0 = market.clear(scenario, scenario.delta, np.zeros(scenario.T), offer)   # B0
+d, sigma = fl.best_response(theta, tau, scenario, belief=b0)              # R, exogenous price-taker
+dispatch = market.clear(scenario, d, sigma, offer)
+bill = fl.settle(tau, scenario, dispatch, b0)
 ```
 
 `notebooks/walkthrough.py` runs this end to end with the planner benchmark and
@@ -36,5 +38,6 @@ uv sync
 uv run pytest -q
 ```
 
-Data comes from [rts-gmlc](https://github.com/etrieschman/rts-gmlc), fetched
-once into `~/.cache/rts_gmlc`.
+Data comes from [rts-gmlc](https://github.com/etrieschman/rts-gmlc), a git
+dependency imported as `rts_gmlc` at the top of `system.py`, fetched once into
+`~/.cache/rts_gmlc`. The LP and QP solver is Gurobi (academic license).

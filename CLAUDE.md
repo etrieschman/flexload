@@ -23,47 +23,48 @@ equation, nothing else. Private repo.
 
 | memo | code | where |
 |---|---|---|
-| ω = (d°, cᵘ, cʳ, cⁱⁿᵛ, ū), δ | `Scenario(delta, d_other, cost_gen, cost_res, cost_inv, capacity, nameplate, unit)` | `scenario.py` |
-| α (flexible share), profile, tightness, outages | `build_scenario(week, alpha, profile, reserve_margin, outage_seed)` | `scenario.py` |
-| PJM / ERCOT, γ, cⱽᴼᴸᴸ, short/long run | `Market(reserve, gamma, voll, long_run, ordc)` | `market.py` |
-| 𝓜_ω(d, σ) | `market.clear(scenario, tariff, d, sigma, c_s) -> Dispatch` | `market.py` |
-| (dᶜᵘʳᵗ, σᶜˡʳ, u, r, λ, μ, ν, η) | `Dispatch(d, sigma, u, r, lam, mu, nu, eta, ...)` | `market.py` |
-| Cʳᵉˢₜ, Ĉⁱⁿᵛ (pools) | `market.pools(dispatch, scenario) -> (C_res, C_inv)` | `market.py` |
-| C_sys | `market.C_sys(dispatch, scenario)`; same assembly as the LP objective (`system_cost`) | `market.py` |
-| κₜ | `market.kappa(dispatch)` | `market.py` |
-| θ = (ψ, β, A, p), sells reserve | `LoadType(psi, beta, A, p, sells_reserve)`; 𝒦ʳᵉˢᵖ deferred | `load.py` |
-| cˢₜ = 2pψβδₜ | `c_s(theta, delta)` | `load.py` |
-| V(d, σ) = −ψ‖d−δ‖² − cˢᵀσᶜˡʳ | `V(theta, delta, d, sigma)` | `load.py` |
-| 𝒟_θ | `feasible(theta, delta, d, sigma)` | `load.py` |
-| R, price-taker (QP) | `best_response(theta, tariff, delta, lam, mu, C_res, C_inv, d_other, d_hat, curtailed)` | `load.py` |
+| ω = (d°, cᵘ, cʳ, cⁱⁿᵛ, ū), δ | `Scenario(delta, d_other, cost_gen, cost_res, cost_inv, capacity, nameplate, unit, names, start)` | `system.py` |
+| one period 𝒯, the year, α, tightness | `scenario(start, T, alpha, reserve_margin)`; `periods(T, alpha, reserve_margin)` (one tightness scale for the year); `tighten`; `margin` | `system.py` |
+| PJM / ERCOT, γ, cⱽᴼᴸᴸ, short/long run, Ĉⁱⁿᵛ | `Market(reserve, gamma, voll, long_run, ordc, missing_money, solver)` | `system.py` |
+| 𝓜_ω(d, σ) | `market.clear(scenario, d, sigma, c_s, d_firm) -> Dispatch` | `system.py` |
+| (dᶜᵘʳᵗ, σᶜˡʳ, u, r, λ, μ, ν, η), Cʳᵉˢₜ, Ĉⁱⁿᵛ | `Dispatch(d, sigma, u, r, shed, lam, mu, nu, eta, C_res, C_inv, ...)`; the pools ride on the dispatch | `system.py` |
+| Ĉⁱⁿᵛ := Σⱼ(cⁱⁿᵛⱼ − Σₜνⱼₜ)ūⱼ over the year | `missing_money(market, periods)`, annual; `clear` prorates it by T/8760 | `system.py` |
+| C_sys, κₜ | `market.C_sys(dispatch, scenario)`, `market.kappa(dispatch)`, `market.marginal_cost(dispatch)` | `system.py` |
+| θ = (ψ, β, A, p), sells reserve, curtailable | `LoadType(psi, beta, A, p, sells_reserve, curtailable)`; `windows(T, hours)`; `named_types(T)`; 𝒦ʳᵉˢᵖ deferred | `load.py` |
+| dᶠⁱʳᵐ = (1−β)δ for a curtailable type | `theta.d_firm(delta)` (None otherwise) | `load.py` |
+| cˢₜ = 2pψβδₜ; V(d, σ); 𝒟_θ | `c_s`, `V`, `feasible` | `load.py` |
+| the load's objective under a belief 𝓜̃ | `payoff(theta, tariff, scenario, belief, d, sigma, d_hat, curtailed)`; the belief is a `Dispatch` | `load.py` |
+| R, price-taker (QP); menu election | `best_response(theta, tariff, scenario, belief, d_hat, curtailed)`; `elect(theta, menu, ...)` | `load.py` |
 | consistent price-taker | `fixed_point(theta, tariff, market, scenario)` | `load.py` |
 | B1 | `planner(theta, market, scenario) -> (d, sigma, S_star)` | `load.py` |
-| B0 | `market.clear(scenario, tau, delta, zeros, c_s)`; no function | — |
-| τ: three charge forms + curtailment | `Tariff(energy, reserve, investment, curtail)`; `marginal(w)`, `share(w, ex_ante)`, `two_part(w, ex_ante, phi, T)`, `firm(beta_firm, hours, exempt_reserve)` | `tariff.py` |
-| window 𝒲 | a weight vector `w` over hours: `hourly(T)`, `all_hours(T)`, `peak_hour(d_sys)`; the load's belief about an uncertain peak is a probability vector in the same slot | `tariff.py` |
-| B = Σₖ Φᵏ | `tariff.bill(d, sigma, lam, mu, C_res, C_inv, d_other, d_hat) -> {energy, reserve, investment, credit}` | `tariff.py` |
-| ∂Φᵏ/∂dₜ | `tariff.marginal(...)` | `tariff.py` |
-| τ₀…τ₆, menu | `named_tariffs(scenario)`; `Menu(options)` | `tariff.py` |
-| S, ρᵏ, Δᵏₜ, fairness | `S`, `recovery`, `alignment`, `fairness`, `summary` | `metrics.py` |
-| settlement (which dispatch feeds which pool) | `settle(tariff, market, scenario, realized, ex_ante)` | `metrics.py` |
-| repeated weeks, learning | `simulate(theta, tariff, market, scenarios, learner)`; `Belief`, `Static`, `PriceAveraging`, `PeakCounts` | `simulate.py` |
-| operator | `evaluate(tariffs, types, market, scenarios) -> table`; `choose(table, rule)` | `operator.py` |
+| B0 | `market.clear(scenario, delta, zeros, c_s, d_firm)`; no function | — |
+| τ: share / two-part per cost-share layer, exemption | `Tariff(reserve, investment, exempt_curtailable)`; `share(w, ex_ante)`, `two_part(w, ex_ante, phi, T)`; energy is always λᵀd | `tariff.py` |
+| window 𝒲 | a weight vector `w`: `all_hours(T)`, `peak_hour(d_sys)` | `tariff.py` |
+| B = Σₖ Φᵏ, ∂Φᵏ/∂dₜ | `tariff.bill(d, sigma, realized, d_other, ex_ante, d_hat, own)`, `tariff.marginal(...)`; cvxpy expressions, `.value` for numbers | `tariff.py` |
+| τ₀…τ₄, τ₆, menu | `named_tariffs(scenario)`; `Menu(options)`; τ₅ became the curtailable type | `tariff.py` |
+| settlement, S, ρᵏ, Δᵏₜ, fairness | `settle`, `S`, `recovery`, `alignment`, `fairness` | `metrics.py` |
+| R under a belief; one row; the operator's table; choice | `respond(theta, tariff, market, scenario, belief, anticipate)`; `summary`; `table(types, tariffs, markets, scenarios)`; `choose(table, rule)` | `metrics.py` |
+| repeated periods, the learned price-taker | `learn(theta, tariff, market, scenarios, eta)` | `metrics.py` |
 
 Conventions: capitalized = class holding data; lowercase = function; order is always
-(d, σ); tildes and hats live on the container, not the field (`dispatch.lam` is λ,
-the belief's constants are the arguments of `best_response`).
+(d, σ). **One number system**: every formula is a cvxpy expression whether its
+inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 
 ## Locked design (settled 2026-10-13 over a long planning pass; do not relitigate)
 
 | topic | decision |
 |---|---|
 | accounting | cˢᵀσ sits in V **and** in the LP objective (the load offers at cost). Welfare counts it once: `S = V − C_sys + cˢᵀσ`. The reserve payment μᵀσ is a **credit layer of the bill**; the load's payoff is V − bill. |
-| the tariff is a function | three charge forms (`marginal`, `share`, `two_part`), one per layer, plus a curtailment rule. Energy is a full member (`marginal`). No enums, no strings: windows are vectors, `ex_ante` is a bool, φ and T are computed from the pool unless `T` is given. |
-| what the bill reads | explicit arguments (λ, μ, Cʳᵉˢ, Cⁱⁿᵛ, d°), never dispatches. The caller computes pools with `market.pools` from the dispatch each layer's `ex_ante` names (`metrics.settle` does this). Inside the load's objective the same arguments are its belief. The bill is plain arithmetic over numpy or cvxpy (`_expr.py`), which is the setup for the price-setter. |
+| the tariff is a function | two charge forms (`share`, `two_part`), one per cost-share layer, plus the reserve exemption flag. Energy is always λᵀd. No enums, no strings: windows are vectors, `ex_ante` is a bool, φ and T are computed from the pool unless `T` is given. |
+| what the bill reads | a `Dispatch` (λ, μ and the pools ride on it) plus d°. Each layer's `ex_ante` flag picks the ex-ante or realized dispatch. Inside the load's objective the dispatch is its belief; a price-setter's belief would be a dispatch whose prices are expressions. Revised 2026-10-19 from "explicit arguments": the nine-argument signatures were the cost. |
 | rate-taker | a price-taker takes each cost-share layer's **average rate** as given at `d_hat` (δ exogenous; previous iterate consistent). C·x/(x̂+x∘) is linear in x, so the best response is a QP. At settlement x̂ = x and the share form is exact. Needs one sentence in the memo. |
-| beliefs | no belief class in the core. A price-taker's belief is the constants passed to `best_response`; a price-setter's belief is the market itself (bilevel, not built). `simulate.Belief` exists only as the learner's state. |
-| clearing | `clear` takes the tariff (dᶠⁱʳᵐ is a tariff slot). Constraints and objective are assembled once (`constraints`, `system_cost`) and shared by `clear`, `C_sys` and `planner`. Net reserve X is its own variable so per-unit rows stay sparse. |
-| scenario knobs | carve-out α; δ profile system (default) or area; **no flat option** until an RQ needs it; tightness by `reserve_margin` at the tightest hour, scaling load not capacity. |
+| beliefs | no belief class. A price-taker's belief is a `Dispatch`; the learner's state (`learn`) is a dispatch with averaged fields; a price-setter's belief is the market itself (bilevel, not built). |
+| clearing | `clear` takes dᶠⁱʳᵐ as a vector from the type (`theta.d_firm`), not a tariff. Constraints and objective are assembled once (`constraints`, `system_cost`) and shared by `clear`, `C_sys` and `planner`. Net reserve X is its own variable so per-unit rows stay sparse. |
+| curtailment | **a load type**, not a tariff (revised 2026-10-19 by Erich): `LoadType.curtailable` sets dᶠⁱʳᵐ = (1−β)δ in every hour; the LP curtails only where κ > VOLL; unpaid, in exchange for connection. The planner holds the headroom instrument but consumes what it bids. τ₆'s reserve exemption stays a tariff flag. |
+| period | T hours from `start`; the week is the default instance, nothing is hard-coded to it. cⁱⁿᵛ is annual on the scenario and prorated by T/8760. |
+| solver | Gurobi (academic license) for the LP and the QPs; 3× HiGHS on the clearing. `Market(solver="HIGHS")` and `best_response(..., solver=)` switch. |
+| scenario knobs | carve-out α with the system's shape; **no flat or area profile** until an RQ needs it; tightness by `reserve_margin` at the tightest hour, scaling load not capacity; over a year one scale factor (`periods`), so only the annual peak period is at the margin. Outages and reserve offer costs were removed 2026-10-19; restore from git when an RQ needs them. |
+| investment pool | annual missing money from the 52-week B0 run, spread evenly (Ĉⁱⁿᵛ/52 every week); decided 2026-10-19. Not weekly (negative in peak weeks), not allocated to scarcity weeks. |
 | repos | data from `rts-gmlc` (github.com/etrieschman/rts-gmlc, public, data only); never re-add a fetcher here. Tariff catalog lives in `docs/catalog/`. |
 | parameter objects | frozen dataclasses throughout for now (arrays inside parameter objects); pydantic when a YAML config layer arrives with the experiment grids. |
 
@@ -71,23 +72,22 @@ the belief's constants are the arguments of `best_response`).
 
 ```
 src/flexload/
-  _expr.py      numpy-or-cvxpy arithmetic (sum_, mul, dot, sum_squares, where)
-  scenario.py   Scenario; build_scenario from rts_gmlc; with_reserve_margin; reserve_margin
-  market.py     DemandCurve, Dispatch, Market (system_cost, constraints, clear, C_sys, pools, kappa, marginal_cost_by_layer)
-  tariff.py     windows; Marginal/Share/TwoPart (+ lowercase constructors); Firm; Tariff; Menu; total; named_tariffs
-  load.py       LoadType; windows_*; named_types; c_s; V; feasible; best_response; fixed_point; planner
-  metrics.py    pools_for; settle; S; recovery; alignment; fairness; summary
-  simulate.py   Belief; Observation; learners; simulate
-  operator.py   respond; evaluate; choose
+  system.py   Scenario; scenario, periods, tighten, margin; DemandCurve; Dispatch; Market (system_cost, constraints, clear, C_sys, kappa, marginal_cost); missing_money
+  tariff.py   all_hours, peak_hour; Share, TwoPart (+ share, two_part); Tariff (bill, marginal); Menu; total; named_tariffs
+  load.py     LoadType; windows; named_types; c_s; V; feasible; payoff; best_response; elect; fixed_point; planner
+  metrics.py  settle; S; recovery; alignment; fairness; respond; summary; table; choose; learn
 notebooks/walkthrough.py   jupytext cells; the documentation
-tests/          conftest (3-generator, 4-hour scenario); test_market, test_tariff, test_load
-docs/           assumptions.md (every non-memo choice, one line each), catalog/
+tests/        conftest (3-generator, 4-hour scenario); test_system, test_tariff, test_load
+docs/         assumptions.md (every non-memo choice, one line each), catalog/
 ```
 
-## Status (2026-10-13)
+Imports run one way: system ← tariff ← load ← metrics. 911 lines (2026-10-19), down from 1,742.
 
-- 31 tests pass. On RTS-GMLC week 31 at `reserve_margin=0.10`: scenario 0.7 s, clearing
-  3–4 s per market, planner 4–8 s, best response 0.02 s, fixed point ≈ 3.5 s per iteration.
+## Status (2026-10-19)
+
+- 35 tests pass. Refactored 2026-10-19 at Erich's request (unreadable, overengineered):
+  four files, one number system, the bill reads a dispatch, curtailment is a type,
+  period not week, Gurobi. With Gurobi: clearing ≈ 1.3 s, planner ≈ 2–3 s.
 - Built: both reserve constructs, short and long run, curtailment (τ₅) and the exempt
   menu (τ₆), all three charge forms, ex-ante and realized bases, the price-taker QP,
   the consistent fixed point, the planner, the four metrics, the weekly loop with two
@@ -105,12 +105,12 @@ docs/           assumptions.md (every non-memo choice, one line each), catalog/
    enough to change the marginal unit. `fixed_point(damping=None)` averages the
    iteration and `history` shows whether it settled. Erich (2026-10-13): nothing wrong
    with the cycle; it is the point of RQ3(b).
-2. **TODO, flagged by Erich: the weekly investment pool.** Missing money is annual cost
-   minus scarcity rents. Divided by 52, the peak week's rents (32 scarcity hours, ≈$195M)
-   dwarf the weekly cost share (≈$16M) and the pool is −$178M, so the investment layer
-   pays the load. Options: weekly as now; annual missing money from a 52-week B0 run,
-   spread evenly; or allocated to scarcity weeks. Decide before the investment layer
-   carries a result. Erich finds this interesting; keep it visible.
+2. **Resolved 2026-10-19: the investment pool is annual.** Weekly missing money went
+   negative in the peak week (rents ≈$195M against a ≈$16M weekly cost share, pool
+   −$178M), so under every tariff with an investment layer, τ₀ included, the layer
+   paid the load to consume at the peak. Now Ĉⁱⁿᵛ comes from a 52-week B0 run under
+   one tightness scale and is spread evenly. Allocation to scarcity weeks stays an
+   option for a later RQ.
 3. **Resolved: other load now sheds at VOLL** (`Dispatch.shed`, in `C_sys`). Before
    this, PJM's hard requirement was slack above ~7% margin and infeasible below, so
    the tightness sweep had no room. Now λ and μ reach VOLL in shortage hours in both
@@ -131,7 +131,8 @@ docs/           assumptions.md (every non-memo choice, one line each), catalog/
 
 ## Next steps, in order
 
-1. Decisions from Erich (below), then the memo sentences they imply.
+1. Decisions from Erich (below), then the memo sentences they imply (now also: Ĉⁱⁿᵛ is
+   annual on the B0 path, prorated 1/52; tightness is set at the annual peak).
 2. `experiments/`: config grids for RQ1–RQ3 over 52 weeks and outage seeds; cache by
    config hash; the figure list. pydantic configs arrive here.
 3. Price-setter: embed `market.constraints` as KKT conditions in the load's problem

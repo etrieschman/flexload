@@ -8,6 +8,7 @@ authors = [{ name = "Erich Trieschman" }]
 dependencies = [
     "cvxpy>=1.6",
     "clarabel>=0.9",
+    "gurobipy>=12",
     "highspy>=1.8",
     "numpy>=2",
     "polars>=1.30",
