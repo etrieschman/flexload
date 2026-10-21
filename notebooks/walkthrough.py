@@ -161,39 +161,22 @@ print(
 # ## The operator's table: types x tariffs, one week
 #
 # The operator's objective is a rule over this table: max-min welfare over the
-# types, with the inflexible load left out, subject to recovery.
+# types, with the inflexible load left out, subject to recovery. Deliverable I
+# runs today's tariff; two Workshop II variants are built here to show the table.
+
+# %%
 t0 = time.time()
-tariffs = fl.named_tariffs(scenario)
+tau_0 = fl.named_tariffs(scenario)["tau_0"]
+tariffs = {
+    "tau_0": tau_0,
+    "tau_4": replace(tau_0, investment=fl.TwoPart(fl.peak_hour(scenario.d_sys), phi=0.0), name="tau_4"),  # investment as a lump sum
+    "tau_5": fl.Menu((tau_0, replace(tau_0, exempt_curtailable=True, name="tau_5_curtailable")), name="tau_5"),  # the exemption menu
+}
 types = fl.named_types(scenario.T, "data_center")
-table = fl.table(
-    {k: types[k] for k in ("mover", "controllable", "curtailable")},
-    {k: tariffs[k] for k in ("tau_0", "tau_2", "tau_4", "tau_5")},
-    [market],
-    [scenario],
-)
+table = fl.table({k: types[k] for k in ("mover", "controllable", "curtailable")}, tariffs, [market], [scenario])
 print(f"{table.shape[0]} rows in {time.time() - t0:.0f}s")
-print(
-    table.select(
-        "tariff",
-        "elected",
-        "type",
-        "efficiency",
-        "value_of_flexibility",
-        "bill_total",
-        "recovery_reserve",
-        "fairness_reserve",
-    )
-)
-print(
-    "max-min welfare picks",
-    fl.choose(table),
-    "; with a uniform prior",
-    fl.choose(
-        table,
-        "expected_welfare",
-        prior={"mover": 1 / 3, "controllable": 1 / 3, "curtailable": 1 / 3},
-    ),
-)
+print(table.select("tariff", "elected", "type", "efficiency", "value_of_flexibility", "bill_total", "recovery_reserve", "fairness_reserve"))
+print("max-min welfare picks", fl.choose(table), "; with a uniform prior", fl.choose(table, "expected_welfare", prior={"mover": 1 / 3, "controllable": 1 / 3, "curtailable": 1 / 3}))
 
 # %% [markdown]
 # ## Learning across weeks: the fourth price belief

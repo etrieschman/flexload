@@ -7,7 +7,9 @@ import numpy as np
 from flexload.load import LoadType, best_response, c_sigma, fixed_point, named_types, planner, blocks
 from flexload.metrics import S, choose, recovery, respond, summary, table
 from flexload.system import Dispatch, Market
-from flexload.tariff import Marginal, Share, Tariff, named_tariffs, peak_hour
+from dataclasses import replace as replace_
+
+from flexload.tariff import Marginal, Menu, Share, Tariff, TwoPart, named_tariffs, peak_hour
 
 
 def belief(lam, mu, delta) -> Dispatch:
@@ -103,7 +105,8 @@ def test_share_on_realized_pools_recovers_exactly(pjm, small):
 
 
 def test_menu_election_and_summary(pjm, small):
-    tau_5 = named_tariffs(small)["tau_5"]
+    tau_0 = named_tariffs(small)["tau_0"]
+    tau_5 = Menu((tau_0, replace_(tau_0, exempt_curtailable=True, name="tau_5_curtailable")), name="tau_5")  # the exemption menu
     for name in ("mover", "curtailable"):
         theta = named_types(small.T)[name]
         _, _, _, elected = respond(theta, tau_5, pjm, small)
@@ -114,7 +117,12 @@ def test_menu_election_and_summary(pjm, small):
 
 def test_table_and_choice(small):
     market = Market(reserve="ercot", gamma=0.0, C_inv=520_000.0)
-    tariffs = {k: v for k, v in named_tariffs(small).items() if k in ("tau_0", "tau_2", "tau_4")}
+    tau_0 = named_tariffs(small)["tau_0"]
+    tariffs = {  # today's tariff and two Workshop II variants, built here
+        "tau_0": tau_0,
+        "tau_2": replace_(tau_0, reserve=TwoPart(np.ones(small.T), phi=0.0), name="tau_2"),
+        "tau_4": replace_(tau_0, investment=TwoPart(peak_hour(small.d_sys), phi=0.0), name="tau_4"),
+    }
     types = {k: v for k, v in named_types(small.T).items() if k in ("mover", "controllable")}
     t = table(types, tariffs, [market], [small])
     assert t.shape[0] == 6 and (t["efficiency"] >= -1e-4).all()
