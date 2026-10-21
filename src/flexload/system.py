@@ -101,12 +101,14 @@ def scenario(
     start: int = 31 * 168,
     T: int = 168,
     alpha: float = 0.05,
-    reserve_margin: float | None = None,
+    reserve_margin: float | None = 0.15,
 ) -> Scenario:
     """Hours ``[start, start + T)`` of RTS-GMLC's day-ahead series at one node.
     ``alpha`` sets the load's size: δ is that share of system load, hour by
     hour, carved out of the RTS total so δ + d° is the data. ``reserve_margin``
-    scales both loads so the tightest hour has that margin (``tighten``)."""
+    scales both loads so the tightest hour has that margin (``tighten``). The
+    default 0.15 is the margin at which ERCOT's prices pay the fleet's annual
+    investment cost (``C_inv`` ≈ 0 over the year)."""
     lo, hi = start, start + T
     load = rts.timeseries("load", "day_ahead")[lo:hi]
     if len(load) != T:
@@ -182,14 +184,16 @@ def _epsilon_std() -> float:
 
 
 def windows(
-    T: int = 168, alpha: float = 0.05, reserve_margin: float | None = None
+    T: int = 168, alpha: float = 0.05, reserve_margin: float | None = 0.15
 ) -> list[Scenario]:
     """The year cut into operating windows of T hours, under one tightness
     scale: the annual tightest hour has the margin and the other windows keep
-    their seasonal slack."""
+    their seasonal slack. At the default 0.15, ERCOT's energy-only prices pay
+    the fleet's annual investment cost and PJM is short about 1.06 B$."""
     hours = rts.timeseries("load", "day_ahead").height
     return tighten(
-        [scenario(s, T, alpha) for s in range(0, hours - hours % T, T)], reserve_margin
+        [scenario(s, T, alpha, reserve_margin=None) for s in range(0, hours - hours % T, T)],
+        reserve_margin,
     )
 
 

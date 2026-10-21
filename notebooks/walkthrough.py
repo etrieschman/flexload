@@ -28,12 +28,14 @@ np.set_printoptions(precision=1, suppress=True, linewidth=140)
 #
 # `alpha` sets the load's size: δ is that share of system load, hour by hour,
 # carved out of the RTS total. `reserve_margin` scales both loads by one factor
-# for the whole year so the annual tightest hour has 10% spare capacity; without
-# it RTS-GMLC is slack (34%) and nothing ever binds. Week 31 is early August, in
+# for the whole year so the annual tightest hour has 15% spare capacity; without
+# it RTS-GMLC is slack (34%) and nothing ever binds. 15% is where ERCOT's
+# energy-only prices pay the fleet's annual investment cost, so its investment
+# layer is empty and PJM's holds the missing money. Week 31 is early August, in
 # the run of scarcity weeks (28–35); the tightest hour is in week 32, the peak
 # load in 34.
 
-weeks = fl.windows(T=24 * 7, alpha=0.05, reserve_margin=0.10)
+weeks = fl.windows(T=24 * 7, alpha=0.05, reserve_margin=0.15)
 scenario = weeks[31]
 print(
     f"T={scenario.T} hours, J={scenario.J} offer blocks on {scenario.units.shape[0]} units"
