@@ -75,7 +75,9 @@ class Share:
         """Linear in x around x̂. Posted rate: the average rate at x̂ times x.
         Knows its share: the tangent of Cᵏ x/(x + x°) at x̂, slope Cᵏ x°/(x̂ + x°)².
         Both equal the exact charge when x = x̂, as at settlement."""
-        rate = _divide(pool, x_hat + x_other)  # the average rate at x̂; zero outside the layer's hours
+        rate = _divide(
+            pool, x_hat + x_other
+        )  # the average rate at x̂; zero outside the layer's hours
         if not knows_share:
             return cp.sum(cp.multiply(rate, x))
         slope = _divide(rate * x_other, x_hat + x_other)  # Cᵏ x° / (x̂ + x°)²
@@ -145,7 +147,12 @@ class Tariff:
         return [
             ("energy", self.energy, energy.C_energy, realized.lam),
             ("reserve", self.reserve, reserve.C_res, realized.mu),
-            ("investment", self.investment, investment.C_inv * hours / hours.sum(), np.ones(hours.shape)),
+            (
+                "investment",
+                self.investment,
+                investment.C_inv * hours / hours.sum(),
+                np.ones(hours.shape),
+            ),
         ]
 
     def bill(
@@ -165,7 +172,9 @@ class Tariff:
         price-taker's objective both are its belief, ``d_hat`` (x̂) is required, and
         ``knows_share`` says whether it knows its own share (``Share.charge``).
         ``own=False`` bills everyone else as one load: no credit, no exemption."""
-        b0 = realized if b0 is None else b0  # one dispatch given: the load's belief plays both roles
+        b0 = (
+            realized if b0 is None else b0
+        )  # one dispatch given: the load's belief plays both roles
         if d_hat is None:
             if isinstance(d, cp.Expression):
                 raise ValueError(
@@ -174,7 +183,11 @@ class Tariff:
             d_hat = np.asarray(d, float)
         out = {}
         for k, form, pool, price in self._layers(realized, b0):
-            x, x_hat, x_other = _base(form.hours, d), form.hours * d_hat, form.hours * d_other
+            x, x_hat, x_other = (
+                _base(form.hours, d),
+                form.hours * d_hat,
+                form.hours * d_other,
+            )
             out[k] = form.charge(x, x_hat, x_other, pool, price, knows_share)
         if own and self.exempt_curtailable and realized.curtailable:
             out["reserve"] = cp.Constant(0.0)
@@ -196,7 +209,10 @@ class Tariff:
         b0 = realized if b0 is None else b0
         out = {}
         for k, form, pool, price in self._layers(realized, b0):
-            out[k] = form.marginal(form.hours * d, form.hours * d_other, pool, price) * form.hours
+            out[k] = (
+                form.marginal(form.hours * d, form.hours * d_other, pool, price)
+                * form.hours
+            )
         if self.exempt_curtailable and realized.curtailable:
             out["reserve"] = np.zeros_like(d)
         out["credit"] = np.zeros_like(d)
@@ -232,10 +248,12 @@ def total(bill: dict):
 def named_tariffs(scenario: Scenario) -> dict[str, Tariff]:
     """τ₀: energy at the margin, reserve and investment split ex ante, investment on the peak hour t*."""
     every_hour, peak = np.ones(scenario.T), peak_hour(scenario.d_sys)
-    tau_0 = Tariff(
-        energy=Marginal(every_hour),
-        reserve=Share(every_hour),
-        investment=Share(peak),
+    tau_0 = Tariff(  # ERCOT and PJM today
+        energy=Marginal(hours=every_hour, ex_ante=False),
+        reserve=Share(hours=every_hour, ex_ante=True),
+        investment=Share(hours=peak, ex_ante=True),
+        credit=True,
+        exempt_curtailable=False,
         name="tau_0",
-    )  # ERCOT and PJM today
+    )
     return {t.name: t for t in (tau_0,)}
