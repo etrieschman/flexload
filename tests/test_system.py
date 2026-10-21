@@ -94,8 +94,8 @@ def test_other_load_sheds_at_voll_when_short(pjm, small):
 def test_missing_money_is_annual_cost_less_rents(pjm, small):
     annual = missing_money(pjm, [small] * 3, cache=False)
     dp = b0(pjm, small)
-    per_period = float(np.sum((small.cost_inv_period - dp.nu.sum(axis=1)) * small.nameplate))
-    assert np.isclose(annual, 3 * per_period)
+    per_window = float(np.sum((small.cost_inv_window - dp.nu.sum(axis=1)) * small.nameplate))
+    assert np.isclose(annual, 3 * per_window)
 
 
 def test_tighten_sets_the_annual_tightest_hour(small):

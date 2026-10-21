@@ -18,16 +18,17 @@ pl.Config.set_tbl_width_chars(160)
 np.set_printoptions(precision=1, suppress=True, linewidth=140)
 
 # %% [markdown]
-# ## ω and δ: the year in periods of one week
+# ## ω and δ: the year in operating windows of one week
 #
-# `alpha` is the flexible load's share of energy, carved out of the RTS total with
-# the system's shape. `reserve_margin` scales both loads by one factor for the
-# whole year so the annual tightest hour has 10% spare capacity; without it
-# RTS-GMLC is slack (34%) and nothing ever binds. Week 31 is early August, in the
-# run of scarcity weeks (28–35); the tightest hour is in week 32, the peak load in 34.
+# `alpha` sets the load's size: δ is that share of system load, hour by hour,
+# carved out of the RTS total. `reserve_margin` scales both loads by one factor
+# for the whole year so the annual tightest hour has 10% spare capacity; without
+# it RTS-GMLC is slack (34%) and nothing ever binds. Week 31 is early August, in
+# the run of scarcity weeks (28–35); the tightest hour is in week 32, the peak
+# load in 34.
 
 # %%
-weeks = fl.periods(T=168, alpha=0.05, reserve_margin=0.10)
+weeks = fl.windows(T=168, alpha=0.05, reserve_margin=0.10)
 scenario = weeks[31]
 print(f"T={scenario.T} hours, J={scenario.J} offer blocks on {scenario.units.shape[0]} units")
 print(f"peak system load {scenario.d_sys.max():,.0f} MW, flexible load delta {scenario.delta.min():,.0f}-{scenario.delta.max():,.0f} MW")
@@ -44,26 +45,26 @@ print(f"this week's tightest-hour margin {fl.margin(scenario):.3f}, ex-ante peak
 market = fl.Market(reserve="ercot")  # or "pjm"; gamma, voll, long_run are fields
 market = replace(market, missing_money=fl.missing_money(market, weeks))
 print(f"annual missing money {market.missing_money / 1e6:,.1f} M$; weekly investment pool {market.missing_money / 52 / 1e6:,.2f} M$")
-tau = fl.named_tariffs(scenario)["tau_0"]
-theta = fl.named_types(scenario.T)["mover"]
-offer = fl.c_s(theta, scenario.delta)  # the mover sells no reserve, so this is zero
-print(tau.reserve, tau.investment.__class__.__name__, "on the peak hour")
+tau = fl.named_tariffs(scenario)["tau_0"]  # today's tariff
+theta = fl.named_types(scenario.T, "data_center")["mover"]  # θ₁ as a data center
+offer = fl.c_sigma(theta, scenario.delta)  # the mover sells no reserve, so this is zero
+print(f"tau_0: reserve {type(tau.reserve).__name__} every hour, investment {type(tau.investment).__name__} on the peak hour t* = {scenario.peak}")
 
 # %% [markdown]
 # ## B0: the inflexible path, and what it clears
 #
-# `clear` is 𝓜_ω(d, σ). The dispatch carries λ, μ and the two pools.
+# `clear` is 𝓜_ω(d, σ). The dispatch carries λ, μ and the cost of each layer.
 
 # %%
 t0 = time.time()
 b0 = market.clear(scenario, scenario.delta, np.zeros(scenario.T), offer, theta.d_firm(scenario.delta))
 print(f"cleared in {time.time() - t0:.1f}s: lambda mean {b0.lam.mean():.1f}, max {b0.lam.max():.1f}; mu > 0 in {(b0.mu > 1e-6).sum()} hours")
-print(f"reserve pool over the week {b0.C_res.sum():,.0f} $, investment pool {b0.C_inv:,.0f} $")
+print(f"cost of each layer over the week: energy {b0.C_energy.sum():,.0f} $, reserve {b0.C_res.sum():,.0f} $, investment {b0.C_inv:,.0f} $")
 
 # %% [markdown]
 # ## R: the exogenous price-taker's best response
 #
-# A QP in (d, σ). The belief is the B0 dispatch: prices, pools and the rate at δ are taken as given.
+# A QP in (d, σ). The belief is the B0 dispatch: prices, layer costs and the rate at δ are taken as given.
 
 # %%
 d, sigma = fl.best_response(theta, tau, scenario, belief=b0)
@@ -74,22 +75,22 @@ print("hours the load moved most:", np.argsort(-np.abs(d - scenario.delta))[:8])
 # %% [markdown]
 # ## The bill, by layer, at settlement
 #
-# Each cost-share layer's pool comes from the dispatch its `ex_ante` flag names.
+# Each cost-share layer's cost comes from the dispatch its `ex_ante` flag names.
 
 # %%
 bill_b0, bill_r = fl.settle(tau, scenario, b0, b0), fl.settle(tau, scenario, dispatch, b0)
 print(pl.DataFrame({"layer": list(bill_b0), "B0": list(bill_b0.values()), "R": list(bill_r.values())}))
 
 # %% [markdown]
-# ## B1: the planner, and the four metrics
+# ## B1: the planner, and the outcomes
 
 # %%
 t0 = time.time()
-d1, s1, S_star = fl.planner(theta, market, scenario)
+d1, s1, S_B1 = fl.planner(theta, market, scenario)
 b1 = market.clear(scenario, d1, s1, offer, theta.d_firm(scenario.delta))
 print(f"planner in {time.time() - t0:.1f}s")
 row = fl.summary(theta, tau, market, scenario)
-print({k: round(v, 1) if isinstance(v, float) else v for k, v in row.items() if k in ("S_star", "S_B0", "S_R", "regret", "value_of_flexibility", "bill_total", "recovery_reserve", "fairness_reserve")})
+print({k: round(v, 1) if isinstance(v, float) else v for k, v in row.items() if k in ("S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility", "bill_total", "recovery_reserve", "fairness_reserve", "price_error")})
 
 # %%
 align = fl.alignment(tau, market, scenario, dispatch, b0)
@@ -105,26 +106,27 @@ print(align.group_by("layer").agg(pl.col("wedge").abs().mean().alias("mean_abs_w
 
 # %%
 t0 = time.time()
-d_c, s_c, dispatch_c, history = fl.fixed_point(theta, tau, market, scenario, max_iter=20, damping=None)
-print(f"{len(history)} iterations in {time.time() - t0:.0f}s, last change {history[-1]:.2f} MW")
-print(f"S_R exogenous {fl.S(theta, market, scenario, dispatch):,.0f}  consistent {fl.S(theta, market, scenario, dispatch_c):,.0f}  S* {S_star:,.0f}")
+d_c, s_c, dispatch_c, believed, history = fl.fixed_point(theta, tau, market, scenario, max_iter=20, damping=None)
+print(f"{len(history)} iterations in {time.time() - t0:.0f}s, last change {history[-1]:.2f} MW, price error {np.abs(believed.lam - dispatch_c.lam).mean():.1f} $/MWh")
+print(f"S_R exogenous {fl.S(theta, market, scenario, dispatch):,.0f}  consistent {fl.S(theta, market, scenario, dispatch_c):,.0f}  S_B1 {S_B1:,.0f}")
 
 # %% [markdown]
 # ## The operator's table: types x tariffs, one week
 #
-# The operator's objective is a rule over this table.
+# The operator's objective is a rule over this table: max-min welfare over the
+# types, with the inflexible load left out, subject to recovery.
 
 # %%
 t0 = time.time()
 tariffs = fl.named_tariffs(scenario)
-types = fl.named_types(scenario.T)
-table = fl.table({k: types[k] for k in ("mover", "clr", "curtailable")}, {k: tariffs[k] for k in ("tau_0", "tau_2", "tau_4", "tau_6")}, [market], [scenario])
+types = fl.named_types(scenario.T, "data_center")
+table = fl.table({k: types[k] for k in ("mover", "controllable", "curtailable")}, {k: tariffs[k] for k in ("tau_0", "tau_2", "tau_4", "tau_5")}, [market], [scenario])
 print(f"{table.shape[0]} rows in {time.time() - t0:.0f}s")
-print(table.select("tariff", "elected", "type", "regret", "value_of_flexibility", "bill_total", "recovery_reserve", "fairness_reserve"))
-print("min-max regret picks", fl.choose(table, "minmax_regret"), "; max welfare picks", fl.choose(table, "max_welfare"))
+print(table.select("tariff", "elected", "type", "efficiency", "value_of_flexibility", "bill_total", "recovery_reserve", "fairness_reserve"))
+print("max-min welfare picks", fl.choose(table), "; with a uniform prior", fl.choose(table, "expected_welfare", prior={"mover": 1 / 3, "controllable": 1 / 3, "curtailable": 1 / 3}))
 
 # %% [markdown]
-# ## Learning across weeks: the third price belief
+# ## Learning across weeks: the fourth price belief
 #
 # The load averages the prices it saw. `price_error` is how far its belief sat
 # from what cleared.

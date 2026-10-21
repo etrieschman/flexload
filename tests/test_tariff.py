@@ -22,8 +22,8 @@ peak = peak_hour(d + d_other)  # hour 2
 def dispatch(d_realized=d, d_firm=None) -> Dispatch:
     z = np.zeros(T)
     return Dispatch(d=d_realized, sigma=sigma, u=np.zeros((1, T)), r=np.zeros((1, T)), shed=z, lam=lam, mu=mu, nu=np.zeros((1, T)),
-                    eta=z, C_res=C_res, C_inv=C_inv, d_bid=d_realized, sigma_bid=sigma, d_firm=d_realized if d_firm is None else d_firm,
-                    c_s=z, y=np.ones(1))
+                    eta=z, C_energy=lam * (d_realized + d_other), C_res=C_res, C_inv=C_inv, d_bid=d_realized, sigma_bid=sigma, d_firm=d_realized if d_firm is None else d_firm,
+                    c_sigma=z, y=np.ones(1))
 
 
 def values(bill) -> dict[str, float]:

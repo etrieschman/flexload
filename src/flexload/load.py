@@ -1,8 +1,8 @@
-"""The load: its type θ, value V, offer price cˢ, and three strategies.
+"""The load: its type θ, value V, offer price c^σ, and three strategies.
 B0 bids δ and offers nothing. R best-responds to a tariff under a belief.
 B1 is the planner's optimum.
 
-A price-taker's belief is a ``Dispatch``: it takes λ, μ and the pools as given,
+A price-taker's belief is a ``Dispatch``: it takes λ, μ and each layer's cost as given,
 and the rate at its believed consumption ``d_hat``. Its bill is then linear in
 (d, σ) and the best response is a QP. The exogenous price-taker's belief is the
 clearing at (δ, 0); the consistent one's is the fixed point ``fixed_point``
@@ -25,11 +25,14 @@ from .tariff import Menu, Tariff, total
 # ----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class LoadType:
-    """θ = (ψ, β, A, p) plus two designations. ``A`` is (M, T), one row per
-    window over which energy is conserved. ``sells_reserve``: offers σ at cˢ.
-    ``curtailable``: the operator may curtail it to (1 − β) δ in any hour where
-    serving it costs more than VOLL, unpaid, in exchange for its connection; it
-    offers no reserve, since the same MW cannot be both headroom and σ."""
+    """θ = (ψ, β, A, p, sells reserve, curtailable). (ψ, β, A, p) are private:
+    the weight on following δ, the tolerated deviation, the blocks of hours over
+    which energy is conserved (``A`` is (M, T), one row per block), and the
+    believed chance a sold MW is called. The designations are public.
+    ``sells_reserve``: offers σ at c^σ. ``curtailable``: declares a firm level
+    before the window; the operator may curtail it to that level where serving it
+    costs more than VOLL, unpaid, in exchange for its connection. It offers no
+    reserve, since the same MW cannot be both headroom and σ."""
 
     psi: float  # weight on following δ, $/MW²h
     beta: float  # tolerated deviation as a fraction of δ
@@ -44,41 +47,59 @@ class LoadType:
         return self.sells_reserve and not self.curtailable
 
     def d_firm(self, delta: np.ndarray) -> np.ndarray | None:
-        return (1.0 - self.beta) * delta if self.curtailable else None
+        """The declared firm level, a MW amount constant over the window:
+        dᶠⁱʳᵐ = (1 − β) min_t δ_t, the largest cut the type tolerates in its
+        lowest hour. None for a load that is not curtailable."""
+        return np.full(delta.shape, (1.0 - self.beta) * float(np.min(delta))) if self.curtailable else None
 
 
-def windows(T: int, hours: int | None) -> np.ndarray:
-    """A for windows of ``hours`` each: T → one window (energy conserved over
-    the period), 1 → every hour (inflexible), None → no window (elastic)."""
+def blocks(T: int, hours: int | None) -> np.ndarray:
+    """A for blocks of ``hours`` each: T → one block (energy conserved over the
+    window, A = 1ᵀ), 1 → every hour (inflexible, A = I), None → no block
+    (elastic, A = 0)."""
     if hours is None:
         return np.zeros((0, T))
     starts = range(0, T, hours)
     return np.array([[1.0 if s <= t < s + hours else 0.0 for t in range(T)] for s in starts])
 
 
-def named_types(T: int, psi: float = 1.0) -> dict[str, LoadType]:
-    """Named points in Θ, from the large-load catalog. Values are placeholders
-    (docs/assumptions.md #16)."""
+# Placeholder parameter values (docs/assumptions.md #16). Levels, not estimates.
+PSI = {"low": 0.5, "medium": 1.0, "high": 2.0}  # $/MW²h
+BETA = {"low": 0.05, "medium": 0.2, "high": 0.5}
+P = {"low": 0.02, "high": 0.2}
+BUSINESS = {  # (ψ, β, A): what the load is, behind its designation
+    "data_center": ("high", "medium", "window"),  # shifts batch jobs, keeps the day's compute
+    "bitcoin_mine": ("low", "high", "elastic"),  # curtailed hashing is lost, not shifted
+}
+
+
+def named_types(T: int, business: str = "data_center") -> dict[str, LoadType]:
+    """θ₀…θ₄ of the report's type table, run as a ``business``: ``"data_center"``
+    or ``"bitcoin_mine"`` sets (ψ, β, A) for the rows that sweep them. The
+    emergency row is fixed at (medium, low, elastic, p high)."""
+    psi, beta, a = BUSINESS[business]
+    A = {"window": blocks(T, T), "elastic": blocks(T, None)}
     return {
-        "inflexible": LoadType(psi, 0.0, windows(T, 1), 0.0, name="inflexible"),
-        "mover": LoadType(psi, 0.2, windows(T, T), 0.0, name="mover"),
-        "clr": LoadType(psi, 0.2, windows(T, T), 0.02, sells_reserve=True, name="clr"),
-        "ers": LoadType(psi, 0.05, windows(T, T), 0.2, sells_reserve=True, name="ers"),
-        "curtailable": LoadType(psi, 0.2, windows(T, T), 0.0, curtailable=True, name="curtailable"),
+        "inflexible": LoadType(PSI[psi], 0.0, blocks(T, 1), 0.0, name="inflexible"),
+        "mover": LoadType(PSI[psi], BETA[beta], A[a], 0.0, name="mover"),
+        "controllable": LoadType(PSI[psi], BETA[beta], A[a], P["low"], sells_reserve=True, name="controllable"),
+        "emergency": LoadType(PSI["medium"], BETA["low"], A["elastic"], P["high"], sells_reserve=True, name="emergency"),
+        "curtailable": LoadType(PSI[psi], BETA[beta], A[a], 0.0, curtailable=True, name="curtailable"),
     }
 
 
 # ----------------------------------------------------------------------------
 # V, cˢ, 𝒟_θ
 # ----------------------------------------------------------------------------
-def c_s(theta: LoadType, delta: np.ndarray) -> np.ndarray:
-    """cˢ_t = 2 p ψ β δ_t: the marginal loss at the largest shed the load tolerates, times the chance it is called."""
+def c_sigma(theta: LoadType, delta: np.ndarray) -> np.ndarray:
+    """c^σ_t = 2 p ψ β δ_t, the cost of standing ready: the marginal loss at the
+    largest shed the load tolerates, times the chance p it is called."""
     return 2.0 * theta.p * theta.psi * theta.beta * delta
 
 
 def V(theta: LoadType, delta: np.ndarray, d, sigma):
-    """V(d, σ) = −ψ‖d − δ‖² − cˢᵀσ, with σ the cleared reserve."""
-    return -theta.psi * cp.sum_squares(d - delta) - cp.sum(cp.multiply(c_s(theta, delta), sigma))
+    """V(d, σ) = −ψ‖d − δ‖² − c^σᵀσ, with σ the cleared reserve."""
+    return -theta.psi * cp.sum_squares(d - delta) - cp.sum(cp.multiply(c_sigma(theta, delta), sigma))
 
 
 def feasible(theta: LoadType, delta: np.ndarray, d, sigma) -> list:
@@ -96,10 +117,10 @@ def feasible(theta: LoadType, delta: np.ndarray, d, sigma) -> list:
 # ----------------------------------------------------------------------------
 def payoff(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch, d, sigma, d_hat: np.ndarray, curtailed: np.ndarray | None = None):
     """V(d̃, σ̃) − B(d̃, σ̃) under the belief. The memo's tilde quantities for a
-    price-taker: σ̃ = σ 𝟙[μ̄ ≥ cˢ], and d̃ = dᶠⁱʳᵐ in the hours ``curtailed`` where the
+    price-taker: σ̃ = σ 𝟙[μ̄ ≥ c^σ], and d̃ = dᶠⁱʳᵐ in the hours ``curtailed`` where the
     load anticipates curtailment, the bid elsewhere."""
     delta = scenario.delta
-    clears = (belief.mu >= c_s(theta, delta) - 1e-12).astype(float)
+    clears = (belief.mu >= c_sigma(theta, delta) - 1e-12).astype(float)
     sigma_t = cp.multiply(clears, sigma) if theta.offers else sigma
     d_t = d
     if curtailed is not None and theta.curtailable:
@@ -118,7 +139,7 @@ def best_response(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: D
     sigma = cp.Variable(T) if theta.offers else np.zeros(T)
     cons = feasible(theta, delta, d, sigma)
     if theta.offers:
-        clears = belief.mu >= c_s(theta, delta) - 1e-12
+        clears = belief.mu >= c_sigma(theta, delta) - 1e-12
         if not clears.all():
             cons.append(sigma[~clears] == 0.0)
     problem = cp.Problem(cp.Maximize(payoff(theta, tariff, scenario, belief, d, sigma, d_hat, curtailed)), cons)
@@ -140,14 +161,16 @@ def elect(theta: LoadType, menu: Menu, scenario: Scenario, belief: Dispatch, d_h
     return best
 
 
-def fixed_point(theta: LoadType, tariff: Tariff, market: Market, scenario: Scenario, anticipate: bool = False, tol: float = 1e-3, max_iter: int = 50, damping: float | None = 0.5) -> tuple[np.ndarray, np.ndarray, Dispatch, list[float]]:
+def fixed_point(theta: LoadType, tariff: Tariff, market: Market, scenario: Scenario, anticipate: bool = False, tol: float = 1e-3, max_iter: int = 50, damping: float | None = 0.5) -> tuple[np.ndarray, np.ndarray, Dispatch, Dispatch, list[float]]:
     """The consistent price-taker: respond to the belief, clear at the response,
     make that the belief, repeat until the bid stops moving. Each step moves a
     fraction ``damping`` toward the new response; ``None`` is the harmonic step
     1/(k+1), which averages out the two-cycles a step merit order produces at
-    scarcity hours. Returns (d, σ, dispatch at the response, bid changes)."""
+    scarcity hours. Returns (d, σ, dispatch at the response, the belief the
+    final bid answered to, bid changes). If ``history[-1]`` is above ``tol`` the
+    map did not settle: price-taking is the wrong model there (RQ3b)."""
     delta, T = scenario.delta, scenario.T
-    offer, d_firm = c_s(theta, delta), theta.d_firm(delta)
+    offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
     belief = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
     d_prev, sigma_prev, history = delta.copy(), np.zeros(T), []
     for k in range(max_iter):
@@ -156,11 +179,11 @@ def fixed_point(theta: LoadType, tariff: Tariff, market: Market, scenario: Scena
         step = damping if damping is not None else 1.0 / (k + 1)
         d, sigma = step * d + (1 - step) * d_prev, step * sigma + (1 - step) * sigma_prev
         history.append(float(np.abs(d - d_prev).max() + np.abs(sigma - sigma_prev).max()))
-        belief = market.clear(scenario, d, sigma, offer, d_firm)
+        believed, belief = belief, market.clear(scenario, d, sigma, offer, d_firm)
         d_prev, sigma_prev = d, sigma
         if history[-1] < tol:
             break
-    return d_prev, sigma_prev, belief, history
+    return d_prev, sigma_prev, belief, believed, history
 
 
 # ----------------------------------------------------------------------------
@@ -174,7 +197,7 @@ def planner(theta: LoadType, market: Market, scenario: Scenario, solver: str = "
     operator's scarcity action, not a scheduling device. The offer cost sits in
     V and in C_sys, so it is added back once. Returns (d, σ, S*)."""
     T, J, delta = scenario.T, scenario.J, scenario.delta
-    offer = c_s(theta, delta)
+    offer = c_sigma(theta, delta)
     d = cp.Variable(T)
     sigma = cp.Variable(T) if theta.offers else np.zeros(T)
     sigma_clr = cp.Variable(T, nonneg=True) if theta.offers else np.zeros(T)

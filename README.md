@@ -6,8 +6,8 @@ best-responds under beliefs about how the market clears, dispatch clears on a
 single-node RTS-GMLC week, a bill settles, and four metrics are read:
 efficiency, alignment, recovery, fairness.
 
-The model is specified in the memo (`wargame_master.tex` in the Overleaf
-project); this package transcribes it. Symbols keep their letters, words keep
+The model is specified in the Workshop I report (`wargame_report.tex` in the
+Overleaf project, §3); this package transcribes it. Symbols keep their letters, words keep
 their words; `CLAUDE.md` holds the notation table and the design decisions. Four modules: `system` (ω, 𝓜), `tariff` (τ), `load` (θ, R, B1), `metrics`. Every formula is a cvxpy expression; read numbers with `.value`.
 
 ```python
@@ -16,14 +16,14 @@ from dataclasses import replace
 import numpy as np
 import flexload as fl
 
-weeks = fl.periods(T=168, alpha=0.05, reserve_margin=0.10)  # ω and δ, the year in weeks
+weeks = fl.windows(T=168, alpha=0.05, reserve_margin=0.10)  # ω and δ from RTS-GMLC: the year in operating windows
 scenario = weeks[31]
 market = fl.Market(reserve="ercot")                          # or "pjm"
 market = replace(market, missing_money=fl.missing_money(market, weeks))  # annual Ĉⁱⁿᵛ, cached
 tau = fl.named_tariffs(scenario)["tau_0"]                    # today's tariff
-theta = fl.named_types(scenario.T)["mover"]                  # a load type
+theta = fl.named_types(scenario.T, "data_center")["mover"]  # θ₁ as a data center
 
-offer = fl.c_s(theta, scenario.delta)
+offer = fl.c_sigma(theta, scenario.delta)
 b0 = market.clear(scenario, scenario.delta, np.zeros(scenario.T), offer)   # B0
 d, sigma = fl.best_response(theta, tau, scenario, belief=b0)              # R, exogenous price-taker
 dispatch = market.clear(scenario, d, sigma, offer)
