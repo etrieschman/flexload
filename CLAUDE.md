@@ -35,8 +35,8 @@ nothing else. Aligned 2026-10-21. Private repo.
 | θ = (ψ, β, A, p, 𝕀{sells reserve}, 𝕀{curtailable}); dᶠⁱʳᵐ = (1−β) minₜ δₜ | `LoadType(psi, beta, A, p, sells_reserve, curtailable)`; `theta.d_firm(delta)` (a level; None if not curtailable) | `load.py` |
 | blocks of hours in A; θ₀…θ₄ as a data center or a bitcoin mine | `blocks(T, hours)`; `named_types(T, business)` with `PSI`, `BETA`, `P`, `BUSINESS` | `load.py` |
 | c^σₜ = 2pψβδₜ; V(d, σ); 𝒟_θ | `c_sigma`, `V`, `feasible` | `load.py` |
-| the load's objective under a belief 𝓜̃ | `payoff(theta, tariff, scenario, belief, d_bid, sigma_bid, d_hat, curtailed, knows_share)`; the belief is a `Dispatch`; the tildes (σ̃ where μ̃ ≥ c^σ, d̃ = dᶠⁱʳᵐ in anticipated hours) are built there | `load.py` |
-| R (QP) | `best_response(theta, tariff, scenario, belief, d_hat, curtailed, knows_share) -> (d_bid, sigma_bid)` | `load.py` |
+| the load's objective under a belief 𝓜̃ | `payoff(theta, tariff, scenario, belief, b0, d_bid, sigma_bid, d_hat, curtailed, knows_share)`; the belief is a `Dispatch`, `b0` holds the ex-ante pools under every belief; the tildes (σ̃ where μ̃ ≥ c^σ, d̃ = dᶠⁱʳᵐ in anticipated hours) are built there | `load.py` |
+| R (QP) | `best_response(theta, tariff, scenario, belief, b0, d_hat, curtailed, knows_share) -> (d_bid, sigma_bid)` | `load.py` |
 | consistent price-taker | `fixed_point(theta, tariff, market, scenario) -> (d, σ, dispatch, believed, history)` | `load.py` |
 | B1 | `planner(theta, market, scenario) -> (d, sigma, S_B1)` | `load.py` |
 | B0 | `market.clear(scenario, delta, zeros, c_sigma, d_firm)`; no function | — |
@@ -89,7 +89,14 @@ Imports run one way: system ← tariff ← load ← metrics.
 
 ## Status (2026-10-21)
 
-- 35 tests pass. Refactored 2026-10-19 (four files, one number system, the bill reads a
+- Evening 2026-10-21: Erich read load.py and metrics.py. `C_inv` is floored at zero
+  (a market whose prices overpay the fleet bills zero on the investment layer); the
+  reserve margin default is 0.15, where ERCOT's annual rents pay the fleet's fixed cost
+  (2,516 vs 2,500 M$) and PJM is short 1,057 M$; `payoff` and `best_response` take
+  `b0` so ex-ante pools are fixed at C(δ, 0) under every belief. At 15% week 31 has a
+  0.229 margin and one hour of μ > 0; the scarcity story lives in week 32 or at a
+  higher α. Results for §4 are not yet run.
+- 36 tests pass. Refactored 2026-10-19 (four files, one number system, the bill reads a
   dispatch, curtailment is a type, window not week, Gurobi) and aligned to the report
   2026-10-21 (firm level, named types by business, c^σ, C_energy, credit slot, τ₅,
   welfare rules, efficiency and price_error columns). Erich's system.py review
@@ -154,8 +161,8 @@ Imports run one way: system ← tariff ← load ← metrics.
 
 ## Decisions needed from Erich
 
-1. **Investment pool proration** (finding 2): weekly, annual spread evenly, or annual
-   allocated to scarcity weeks. Recommendation: annual from a 52-week B0 run, spread evenly.
+1. Resolved 2026-10-21: the investment pool is annual, spread evenly, floored at zero;
+   the margin is calibrated so ERCOT's prices pay the fleet. A memo sentence each.
 2. Placeholders to replace before the paper: investment costs by category, the ORDC
    shape (from LOLP), named-type values (ψ, β, p), β_firm. Fine for Workshop 1.
 3. Two memo sentences: the rate-taker reading of the price-taker, and V(d, σ) with the

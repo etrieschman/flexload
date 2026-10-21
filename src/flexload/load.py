@@ -119,10 +119,12 @@ def feasible(theta: LoadType, delta: np.ndarray, d_bid, sigma_bid) -> list:
 # ----------------------------------------------------------------------------
 # R
 # ----------------------------------------------------------------------------
-def payoff(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch, d_bid, sigma_bid, d_hat: np.ndarray, curtailed: np.ndarray | None = None, knows_share: bool = False):
+def payoff(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch, b0: Dispatch, d_bid, sigma_bid, d_hat: np.ndarray, curtailed: np.ndarray | None = None, knows_share: bool = False):
     """V(d̃, σ̃) − B(d̃, σ̃) under the belief, where the tildes are the load's
     expectation of its own dispatch: σ̃ = σ_bid where μ̃ ≥ c^σ, else 0; d̃ = dᶠⁱʳᵐ
-    in the hours ``curtailed`` where it anticipates curtailment, else d_bid."""
+    in the hours ``curtailed`` where it anticipates curtailment, else d_bid.
+    The belief prices the bill; ``b0``, the dispatch at (δ, 0), holds the
+    ex-ante pools Ĉᵏ, fixed under every belief."""
     delta = scenario.delta
     sigma_tilde = sigma_bid
     if theta.sells_reserve:
@@ -132,16 +134,17 @@ def payoff(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch
     if curtailed is not None and theta.curtailable:
         cut = np.asarray(curtailed, float)
         d_tilde = cp.multiply(1.0 - cut, d_bid) + cut * theta.d_firm(delta)
-    bill = tariff.bill(d_tilde, sigma_tilde, belief, scenario.d_other, d_hat=d_hat, knows_share=knows_share)
+    bill = tariff.bill(d_tilde, sigma_tilde, belief, scenario.d_other, b0, d_hat=d_hat, own=True, knows_share=knows_share)
     return V(theta, delta, d_tilde, sigma_tilde) - total(bill)
 
 
-def best_response(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch, d_hat: np.ndarray | None = None, curtailed: np.ndarray | None = None, knows_share: bool = False, solver: str = "GUROBI") -> tuple[np.ndarray, np.ndarray]:
-    """max payoff over 𝒟_θ: a QP. ``d_hat`` is the consumption the bill is
-    linearized at; it defaults to the belief's. ``knows_share``: the load knows
-    its charge is its share of each pool (the consistent price-taker); otherwise
-    it takes the posted average rate. In the hours where the believed μ is below
-    c^σ the load offers zero. Returns the bid (d_bid, sigma_bid)."""
+def best_response(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch, b0: Dispatch, d_hat: np.ndarray | None = None, curtailed: np.ndarray | None = None, knows_share: bool = False, solver: str = "GUROBI") -> tuple[np.ndarray, np.ndarray]:
+    """max payoff over 𝒟_θ: a QP. ``b0`` is the dispatch at (δ, 0), the source
+    of ex-ante pools. ``d_hat`` is the consumption the bill is linearized at; it
+    defaults to the belief's. ``knows_share``: the load knows its charge is its
+    share of each pool (the consistent price-taker); otherwise it takes the
+    posted average rate. In the hours where the believed μ is below c^σ the
+    load offers zero. Returns the bid (d_bid, sigma_bid)."""
     T, delta = scenario.T, scenario.delta
     d_hat = belief.d if d_hat is None else d_hat
     d_bid = cp.Variable(T)
@@ -151,7 +154,7 @@ def best_response(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: D
         clears = belief.mu >= c_sigma(theta, delta) - 1e-12
         if not clears.all():
             cons.append(sigma_bid[~clears] == 0.0)
-    objective = payoff(theta, tariff, scenario, belief, d_bid, sigma_bid, d_hat, curtailed, knows_share)
+    objective = payoff(theta, tariff, scenario, belief, b0, d_bid, sigma_bid, d_hat, curtailed, knows_share)
     problem = cp.Problem(cp.Maximize(objective), cons)
     problem.solve(solver=solver)
     if problem.status not in ("optimal", "optimal_inaccurate"):
@@ -173,11 +176,11 @@ def fixed_point(theta: LoadType, tariff: Tariff, market: Market, scenario: Scena
     wrong model there (RQ3b)."""
     delta, T = scenario.delta, scenario.T
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
-    belief = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
-    d_prev, sigma_prev, history = delta.copy(), np.zeros(T), []
+    b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
+    belief, d_prev, sigma_prev, history = b0, delta.copy(), np.zeros(T), []
     for k in range(max_iter):
         curtailed = (belief.lam >= market.voll - 1e-6) if anticipate else None  # shortage hours: λ̃ at VOLL
-        d_bid, sigma_bid = best_response(theta, tariff, scenario, belief, d_prev, curtailed, knows_share=True)
+        d_bid, sigma_bid = best_response(theta, tariff, scenario, belief, b0, d_hat=d_prev, curtailed=curtailed, knows_share=True)
         step = damping if damping is not None else 1.0 / (k + 1)
         d_bid = step * d_bid + (1 - step) * d_prev
         sigma_bid = step * sigma_bid + (1 - step) * sigma_prev

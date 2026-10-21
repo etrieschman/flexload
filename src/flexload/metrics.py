@@ -80,10 +80,10 @@ def respond(theta: LoadType, tariff: Tariff, market: Market, scenario: Scenario,
     b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
     if belief == "exogenous":
         curtailed = (b0.lam >= market.voll - 1e-6) if anticipate else None
-        d_bid, sigma_bid = best_response(theta, tariff, scenario, b0, d_hat=delta, curtailed=curtailed, knows_share=False)
+        d_bid, sigma_bid = best_response(theta, tariff, scenario, b0, b0, d_hat=delta, curtailed=curtailed, knows_share=False)
         dispatch, believed = market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0
     elif belief == "consistent":
-        _, _, dispatch, believed, _ = fixed_point(theta, tariff, market, scenario, anticipate)
+        _, _, dispatch, believed, _ = fixed_point(theta, tariff, market, scenario, anticipate=anticipate)
     else:
         raise ValueError(belief)
     return dispatch, b0, believed
@@ -139,7 +139,8 @@ def choose(table: pl.DataFrame, rule: str = "maxmin_welfare", prior: dict[str, f
     if rule == "maxmin_welfare":
         score = by_type.group_by("tariff").agg(pl.col("S_R").min().alias("score"))
     elif rule == "expected_welfare":
-        assert prior is not None, "expected_welfare needs a prior over types"
+        if prior is None:
+            raise ValueError("expected_welfare needs a prior over types")
         weights = pl.DataFrame({"type": list(prior), "w": list(prior.values())})
         score = by_type.join(weights, on="type").group_by("tariff").agg((pl.col("S_R") * pl.col("w")).sum().alias("score"))
     else:
@@ -155,13 +156,14 @@ def learn(theta: LoadType, tariff: Tariff, market: Market, scenarios: list[Scena
     belief is a dispatch whose prices, layer costs and consumption are
     exponential averages, weight ``eta`` on the latest, of what the load saw.
     It starts at the first window's clearing at (δ, 0) and takes the posted
-    rate. Returns one row per window and the dispatches."""
+    rate. The learner has to estimate the ex-ante pools too, so its belief
+    serves as its own ``b0``. Returns one row per window and the dispatches."""
     rows, dispatches, belief = [], [], None
     for scenario in scenarios:
         offer, d_firm = c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta)
         b0 = market.clear(scenario, scenario.delta, np.zeros(scenario.T), offer, d_firm)
         belief = b0 if belief is None else belief
-        d_bid, sigma_bid = best_response(theta, tariff, scenario, belief, d_hat=belief.d, curtailed=None, knows_share=False)
+        d_bid, sigma_bid = best_response(theta, tariff, scenario, belief, belief, d_hat=belief.d, curtailed=None, knows_share=False)
         dispatch = market.clear(scenario, d_bid, sigma_bid, offer, d_firm)
         bill = settle(tariff, scenario, dispatch, b0, own=True)
         rows.append({

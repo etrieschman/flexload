@@ -168,9 +168,10 @@ class Tariff:
     ) -> dict:
         """B = Σ_k Bᵏ, the reserve payment as a negative layer, as cvxpy expressions.
         ``realized`` is the dispatch at the bid and prices energy and the credit;
-        ``b0`` is the dispatch at (δ, 0), the source of ex-ante pools. Inside a
-        price-taker's objective both are its belief, ``d_hat`` (x̂) is required, and
-        ``knows_share`` says whether it knows its own share (``Share.charge``).
+        ``b0`` is the dispatch at (δ, 0), the source of ex-ante pools, fixed under
+        every belief. Inside a price-taker's objective ``realized`` is its belief,
+        ``d_hat`` (x̂) is required, and ``knows_share`` says whether it knows its
+        own share (``Share.charge``).
         ``own=False`` bills everyone else as one load: no credit, no exemption."""
         b0 = (
             realized if b0 is None else b0
