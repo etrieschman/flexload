@@ -27,7 +27,7 @@ Formulas are cvxpy expressions on numbers or variables alike; read ``.value``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import cvxpy as cp
 import numpy as np
@@ -223,30 +223,15 @@ def total(bill: dict):
 
 
 # ----------------------------------------------------------------------------
-# named tariffs: τ₀ today; τ₁…τ₅ one slot changed each (the report's table)
+# today's tariff τ₀
 # ----------------------------------------------------------------------------
-def named_tariffs(scenario: Scenario, gamma: float = 0.03) -> dict[str, Tariff | Menu]:
-    T, every_hour, peak = scenario.T, np.ones(scenario.T), peak_hour(scenario.d_sys)
+def named_tariffs(scenario: Scenario) -> dict[str, Tariff]:
+    """τ₀: energy at the margin, reserve and investment split ex ante, investment on the peak hour t*."""
+    every_hour, peak = np.ones(scenario.T), peak_hour(scenario.d_sys)
     tau_0 = Tariff(
         energy=Marginal(every_hour),
         reserve=Share(every_hour),
         investment=Share(peak),
         name="tau_0",
     )  # ERCOT and PJM today
-    # tau_1 = replace(
-    #     tau_0, reserve=Share(every_hour, ex_ante=False), name="tau_1"
-    # )  # ex-post reserve cost
-    # tau_2 = replace(
-    #     tau_0, reserve=TwoPart(every_hour, phi=gamma), name="tau_2"
-    # )  # two-part reserve: γμ_t + T
-    # tau_3 = replace(
-    #     tau_0, investment=Share(every_hour), name="tau_3"
-    # )  # investment on all hours (PUCT 58484)
-    # tau_4 = replace(
-    #     tau_0, investment=TwoPart(peak, phi=0.0), name="tau_4"
-    # )  # two-part investment: lump sum only
-    # tau_5 = Menu(
-    #     (tau_0, replace(tau_0, exempt_curtailable=True, name="tau_5_curtailable")),
-    #     name="tau_5",
-    # )  # PJM Non-Firm CD
     return {t.name: t for t in (tau_0,)}
