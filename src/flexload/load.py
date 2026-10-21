@@ -237,14 +237,14 @@ def fixed_point(
     tariff: Tariff,
     market: Market,
     scenario: Scenario,
-    anticipate: bool = False,
     tol: float = 1e-3,
     max_iter: int = 50,
     damping: float | None = 0.5,
 ) -> tuple[np.ndarray, np.ndarray, Dispatch, Dispatch, list[float]]:
     """The consistent price-taker. Respond to the belief, clear at the response,
     make that the belief, repeat until the bid stops moving. It knows its own
-    share, so each round also moves the tangent of its charge to the last bid.
+    share, so each round also moves the tangent of its charge to the last bid,
+    and it expects curtailment where its believed λ is at c^VOLL.
     Each step moves a fraction ``damping`` toward the new response; ``None`` is
     the harmonic step 1/(k+1), which averages out the two-cycles a step merit
     order produces at scarcity hours. Returns (d_bid, sigma_bid, the dispatch
@@ -263,7 +263,7 @@ def fixed_point(
             belief,
             b0,
             d_hat=d_prev,
-            anticipate=anticipate,
+            anticipate=True,
             voll=market.voll,
             knows_share=True,
         )

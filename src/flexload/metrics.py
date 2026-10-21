@@ -1,7 +1,6 @@
-"""Settlement, welfare, the outcomes, and the loops that fill the operator's
-table: one row per (type, tariff, market, window), the repeated game with a
-learning load, and the operator's rule over the table. Report §1 "Outcomes"
-and §3 "System operator".
+"""Settlement, welfare, the outcomes, the loop that fills the operator's
+table, one row per (type, tariff, market, window), and the operator's rule
+over the table. Report §1 "Outcomes" and §3 "System operator".
 
 Outcomes: welfare S at B0, B1 and R; efficiency S^B1 − S^R; and per layer,
 alignment Δᵏ_t, recovery ρᵏ, fairness.
@@ -9,7 +8,6 @@ alignment Δᵏ_t, recovery ρᵏ, fairness.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from itertools import product
 
 import numpy as np
@@ -69,12 +67,18 @@ def fairness(tariff: Tariff, scenario: Scenario, responding: Dispatch, planned: 
 # ----------------------------------------------------------------------------
 # one row of the operator's table
 # ----------------------------------------------------------------------------
-def respond(theta: LoadType, tariff: Tariff, market: Market, scenario: Scenario, belief: str = "exogenous", anticipate: bool = False) -> tuple[Dispatch, Dispatch, Dispatch]:
+def respond(
+    theta: LoadType,
+    tariff: Tariff,
+    market: Market,
+    scenario: Scenario,
+    belief: str = "exogenous",
+) -> tuple[Dispatch, Dispatch, Dispatch]:
     """R: the load's response under its belief about prices, ``"exogenous"``
-    (the clearing at (δ, 0), posted rates) or ``"consistent"`` (the fixed point,
-    knowing its share). ``anticipate``: a curtailable load expects to be cut in
-    the hours where its believed price is at VOLL. Returns the dispatch at the
-    response, b0, and the belief the bid answered to."""
+    (the clearing at (δ, 0), the posted rate, consumption as bid) or
+    ``"consistent"`` (the fixed point, knowing its share, cut to dᶠⁱʳᵐ where
+    λ̃ is at VOLL). Returns the dispatch at the response, b0, and the belief
+    the bid answered to."""
     delta, T = scenario.delta, scenario.T
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
     b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
@@ -86,23 +90,30 @@ def respond(theta: LoadType, tariff: Tariff, market: Market, scenario: Scenario,
             b0,
             b0,
             d_hat=delta,
-            anticipate=anticipate,
+            anticipate=False,
             voll=market.voll,
             knows_share=False,
         )
         dispatch, believed = market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0
     elif belief == "consistent":
-        _, _, dispatch, believed, _ = fixed_point(theta, tariff, market, scenario, anticipate=anticipate)
+        _, _, dispatch, believed, _ = fixed_point(theta, tariff, market, scenario)
     else:
         raise ValueError(belief)
     return dispatch, b0, believed
 
 
-def summary(theta: LoadType, tariff: Tariff, market: Market, scenario: Scenario, belief: str = "exogenous", anticipate: bool = False, b1: tuple | None = None) -> dict:
+def summary(
+    theta: LoadType,
+    tariff: Tariff,
+    market: Market,
+    scenario: Scenario,
+    belief: str = "exogenous",
+    b1: tuple | None = None,
+) -> dict:
     """One row: welfare at B0, B1 and R, efficiency, the bill by layer, recovery,
     fairness, and the belief's price error. ``b1`` is ``(d, σ, S^B1)`` from
     ``planner`` if already solved."""
-    dispatch, b0, believed = respond(theta, tariff, market, scenario, belief, anticipate)
+    dispatch, b0, believed = respond(theta, tariff, market, scenario, belief)
     d1, s1, S_B1 = planner(theta, market, scenario) if b1 is None else b1
     planned = market.clear(scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta))
     bill = settle(tariff, scenario, dispatch, b0, own=True)
@@ -118,12 +129,21 @@ def summary(theta: LoadType, tariff: Tariff, market: Market, scenario: Scenario,
     }
 
 
-def table(types: dict[str, LoadType], tariffs: dict[str, Tariff], markets: list[Market], scenarios: list[Scenario], belief: str = "exogenous", anticipate: bool = False) -> pl.DataFrame:
+def table(
+    types: dict[str, LoadType],
+    tariffs: dict[str, Tariff],
+    markets: list[Market],
+    scenarios: list[Scenario],
+    belief: str = "exogenous",
+) -> pl.DataFrame:
     """The operator's table: one row per (type, tariff, market, window). B1 is solved once per (type, market, window)."""
     rows = []
     for theta, market, scenario in product(types.values(), markets, scenarios):
         b1 = planner(theta, market, scenario)
-        rows += [summary(theta, tariff, market, scenario, belief, anticipate, b1) for tariff in tariffs.values()]
+        rows += [
+            summary(theta, tariff, market, scenario, belief, b1)
+            for tariff in tariffs.values()
+        ]
     return pl.DataFrame(rows)
 
 
@@ -155,49 +175,3 @@ def choose(table: pl.DataFrame, rule: str = "maxmin_welfare", prior: dict[str, f
     else:
         raise ValueError(rule)
     return str(score.sort("score", descending=True)["tariff"][0])
-
-
-# ----------------------------------------------------------------------------
-# the repeated game: a price-taker that learns across windows
-# ----------------------------------------------------------------------------
-def learn(theta: LoadType, tariff: Tariff, market: Market, scenarios: list[Scenario], eta: float = 0.3) -> tuple[pl.DataFrame, list[Dispatch]]:
-    """Window after window: respond to the belief, clear, observe, update. The
-    belief is a dispatch whose prices, layer costs and consumption are
-    exponential averages, weight ``eta`` on the latest, of what the load saw.
-    It starts at the first window's clearing at (δ, 0) and takes the posted
-    rate. The learner has to estimate the ex-ante pools too, so its belief
-    serves as its own ``b0``. Returns one row per window and the dispatches."""
-    rows, dispatches, belief = [], [], None
-    for scenario in scenarios:
-        offer, d_firm = c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta)
-        b0 = market.clear(scenario, scenario.delta, np.zeros(scenario.T), offer, d_firm)
-        belief = b0 if belief is None else belief
-        d_bid, sigma_bid = best_response(
-            theta,
-            tariff,
-            scenario,
-            belief,
-            belief,
-            d_hat=belief.d,
-            anticipate=False,
-            voll=market.voll,
-            knows_share=False,
-        )
-        dispatch = market.clear(scenario, d_bid, sigma_bid, offer, d_firm)
-        bill = settle(tariff, scenario, dispatch, b0, own=True)
-        rows.append({
-            "start": scenario.start, "S": S(theta, market, scenario, dispatch), "bill_total": sum(bill.values()),
-            "price_error": float(np.abs(dispatch.lam - belief.lam).mean()),
-        })
-        dispatches.append(dispatch)
-        belief = replace(
-            belief,
-            lam=(1 - eta) * belief.lam + eta * dispatch.lam,
-            mu=(1 - eta) * belief.mu + eta * dispatch.mu,
-            Pi=(1 - eta) * belief.Pi + eta * dispatch.Pi,
-            C_energy=(1 - eta) * belief.C_energy + eta * dispatch.C_energy,
-            C_res=(1 - eta) * belief.C_res + eta * dispatch.C_res,
-            C_inv=(1 - eta) * belief.C_inv + eta * dispatch.C_inv,
-            d=(1 - eta) * belief.d + eta * dispatch.d,
-        )
-    return pl.DataFrame(rows), dispatches

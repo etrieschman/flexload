@@ -5,11 +5,11 @@
 # lays it out: fix the market, window and tariff; form the load's belief; the
 # load bids; dispatch clears; the bill settles and the metrics are read. Then
 # the two benchmarks (B0, B1), the consistent price-taker, the table over the
-# load types, the learner across windows, and one figure.
+# load types, and one figure.
 #
 # Run it as a script, `uv run python notebooks/walkthrough.py`, or cell by cell
 # in the `flexload (uv)` kernel. The first code cell holds every setting: the
-# window, the load's size and type, the market, the reserve margin, the learner.
+# window, the load's size and type, the market, the reserve margin.
 # Each later cell prints what it does. The RTS-GMLC data is fetched once into
 # `~/.cache/rts_gmlc`; the first run downloads it. The report (§3) has the model;
 # `docs/assumptions.md` has every choice the report does not make.
@@ -39,8 +39,6 @@ RESERVE_MARGIN = 0.15  # spare capacity at the year's tightest hour (the default
 RESERVE = "ercot"  # "ercot" (demand curve) or "pjm" (hard requirement)
 BUSINESS = "data_center"  # or "bitcoin_mine": sets (psi, beta, A) of the swept types
 TYPE = "mover"  # inflexible, mover, controllable, emergency, curtailable
-LEARN_WEEKS = slice(28, 36)  # windows the learner plays, in order
-ETA = 0.5  # the learner's weight on the latest window
 print(f"RTS-GMLC data: {rts.data_root()} at ref {rts.REF[:8]}")
 
 # %%
@@ -141,13 +139,6 @@ table = fl.table(types, fl.named_tariffs(scenario), [market], [scenario])
 print(f"{table.shape[0]} rows in {time.time() - t0:.0f}s")
 cols = ("type", "S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility")
 print(table.select(*cols))
-
-# %%
-# Play the windows in order; the belief averages what the load saw, weight ETA on the
-# latest.
-print("\nThe learner across windows")
-trace, _ = fl.learn(theta, tau, market, weeks[LEARN_WEEKS], eta=ETA)
-print(trace)
 
 # %%
 # Prices at B0 and R on top; delta, the bid and the planner's consumption below.
