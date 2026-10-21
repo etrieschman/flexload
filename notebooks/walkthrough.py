@@ -1,9 +1,19 @@
 # %% [markdown]
 # # flexload walkthrough
 #
-# One window of the game, step by step (report §5, Table "code"). Run as a
-# script, `uv run python notebooks/walkthrough.py`, or cell by cell in the
-# `flexload (uv)` kernel. Every setting is in the next cell.
+# One operating window of the game, played the way the report's prototype table
+# lays it out: fix the market, window and tariff; form the load's belief; the
+# load bids; dispatch clears; the bill settles and the metrics are read. Then
+# the two benchmarks (B0, B1), the consistent price-taker, the table over the
+# load types, the learner across windows, and one figure.
+#
+# Run it as a script, `uv run python notebooks/walkthrough.py`, or cell by cell
+# in the `flexload (uv)` kernel. The first code cell holds every setting: the
+# window, the load's size and type, the market, the reserve margin, the learner.
+# Each later cell prints what it does. The RTS-GMLC data is fetched once into
+# `~/.cache/rts_gmlc`; the first run downloads it. The report (§3) has the model;
+# `docs/assumptions.md` has every choice the report does not make.
+
 
 # %%
 import time
@@ -19,10 +29,9 @@ pl.Config.set_tbl_rows(30)
 pl.Config.set_tbl_width_chars(160)
 np.set_printoptions(precision=1, suppress=True, linewidth=140)
 
-# %% [markdown]
-# ## Settings
-
 # %%
+# Every knob the walkthrough turns; change them here and nowhere else.
+print("\nSettings")
 T = 168  # hours per operating window: one week
 WEEK = 31  # the window shown: early August, in the scarcity weeks 28-35
 ALPHA = 0.05  # the load's size, its share of system load
@@ -34,13 +43,10 @@ LEARN_WEEKS = slice(28, 36)  # windows the learner plays, in order
 ETA = 0.5  # the learner's weight on the latest window
 print(f"RTS-GMLC data: {rts.data_root()} at ref {rts.REF[:8]}")
 
-# %% [markdown]
-# ## 1. Fix the market and window; set the tariff
-#
-# `windows` cuts the year into windows under one tightness scale. `C_inv` is the
-# annual cost of the investment layer, from a B0 run over the year (cached).
-
 # %%
+# Cut the year into windows under one tightness scale, pick one, build the market
+# with its annual investment cost, and take today's tariff and one load type.
+print("\n1. Fix the market and window; set the tariff")
 t0 = time.time()
 weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN)
 scenario = weeks[WEEK]
@@ -62,10 +68,10 @@ steps = list(zip(ordc.widths.round().tolist(), ordc.prices.round().tolist()))
 print(f"sigma_eps {scenario.epsilon_std:,.0f} MW")
 print(f"ORDC steps (MW, $/MWh): {steps[:4]} ...")
 
-# %% [markdown]
-# ## 2. Inputs for the load's belief: dispatch at the preferred profile (B0)
-
 # %%
+# Clear the market at (delta, 0). The exogenous price-taker takes these prices and
+# costs as given; this dispatch is also benchmark B0.
+print("\n2. Inputs for the load's belief: dispatch at the preferred profile (B0)")
 t0 = time.time()
 b0 = market.clear(scenario, scenario.delta, np.zeros(T), offer, d_firm)
 print(f"cleared in {time.time() - t0:.1f}s")
@@ -75,26 +81,25 @@ print(f"energy cost {b0.C_energy.sum():,.0f} $")
 print(f"reserve cost {b0.C_res.sum():,.0f} $")
 print(f"investment cost {b0.C_inv:,.0f} $")
 
-# %% [markdown]
-# ## 3. The load bids (exogenous price-taker: posted rates at the B0 prices)
-
 # %%
+# Solve the load's QP against the B0 belief and read the bid (d_bid, sigma_bid).
+print("\n3. The load bids (exogenous price-taker: posted rates at the B0 prices)")
 d_bid, sigma_bid = fl.best_response(theta, tau, scenario, belief=b0, b0=b0)
 print(f"energy shifted {np.abs(d_bid - scenario.delta).sum():,.0f} MWh")
 print("hours moved most:", np.argsort(-np.abs(d_bid - scenario.delta))[:8])
 
-# %% [markdown]
-# ## 4. Dispatch clears
-
 # %%
+# Clear the market at the bid: what the load consumed and what cleared, the prices,
+# the cost of each layer.
+print("\n4. Dispatch clears")
 dispatch = market.clear(scenario, d_bid, sigma_bid, offer, d_firm)
 print(f"served {dispatch.d.sum():,.0f} of {d_bid.sum():,.0f} MWh bid")
 print(f"price error {np.abs(b0.lam - dispatch.lam).mean():.1f} $/MWh")
 
-# %% [markdown]
-# ## 5. The bill settles; the metrics are calculated
-
 # %%
+# Bill the load and everyone else at the realized dispatch, then the alignment wedge
+# by layer.
+print("\n5. The bill settles; the metrics are calculated")
 bill_b0 = fl.settle(tau, scenario, b0, b0)
 bill_r = fl.settle(tau, scenario, dispatch, b0)
 bills = {"layer": list(bill_b0)}
@@ -103,10 +108,10 @@ print(pl.DataFrame(bills))
 align = fl.alignment(tau, market, scenario, dispatch, b0)
 print(align.group_by("layer").agg(pl.col("wedge").abs().mean().alias("mean_abs_wedge")))
 
-# %% [markdown]
-# ## Benchmarks: B0 is step 2; B1 is the planner
-
 # %%
+# The planner picks the load's bid to maximize welfare; one summary row collects S at
+# B0, B1 and R.
+print("\nBenchmarks: B0 is step 2; B1 is the planner")
 t0 = time.time()
 d_b1, sigma_b1, S_B1 = fl.planner(theta, market, scenario)
 print(f"planner in {time.time() - t0:.1f}s")
@@ -114,12 +119,10 @@ row = fl.summary(theta, tau, market, scenario, b1=(d_b1, sigma_b1, S_B1))
 keys = ("S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility", "bill_total")
 print({k: round(row[k], 1) for k in keys})
 
-# %% [markdown]
-# ## The consistent price-taker: steps 2-4 iterated to a fixed point
-#
-# Harmonic damping averages out the cycle a step merit order can produce.
-
 # %%
+# Bid, clear, make the result the belief, repeat; the load knows its share. Harmonic
+# damping averages out the cycle a step merit order can produce.
+print("\nThe consistent price-taker: steps 2-4 iterated to a fixed point")
 t0 = time.time()
 fp = fl.fixed_point(theta, tau, market, scenario, max_iter=20, damping=None)
 d_c, s_c, dispatch_c, believed, history = fp
@@ -129,10 +132,9 @@ print(f"S_R exogenous {fl.S(theta, market, scenario, dispatch):,.0f}")
 print(f"S_R consistent {fl.S(theta, market, scenario, dispatch_c):,.0f}")
 print(f"S_B1 {S_B1:,.0f}")
 
-# %% [markdown]
-# ## The table: one row per type (RQ1)
-
 # %%
+# Steps 2 to 5 and both benchmarks for every load type under today's tariff.
+print("\nThe table: one row per type (RQ1)")
 t0 = time.time()
 types = fl.named_types(T, BUSINESS)
 table = fl.table(types, fl.named_tariffs(scenario), [market], [scenario])
@@ -140,17 +142,17 @@ print(f"{table.shape[0]} rows in {time.time() - t0:.0f}s")
 cols = ("type", "S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility")
 print(table.select(*cols))
 
-# %% [markdown]
-# ## The learner across windows
-
 # %%
+# Play the windows in order; the belief averages what the load saw, weight ETA on the
+# latest.
+print("\nThe learner across windows")
 trace, _ = fl.learn(theta, tau, market, weeks[LEARN_WEEKS], eta=ETA)
 print(trace)
 
-# %% [markdown]
-# ## Figure: prices and consumption on the window
-
 # %%
+# Prices at B0 and R on top; delta, the bid and the planner's consumption below.
+# Saved under notebooks/figures.
+print("\nFigure: prices and consumption on the window")
 import matplotlib
 
 matplotlib.use("Agg")
