@@ -72,7 +72,7 @@ def test_welfare_ordering_B0_R_B1(pjm, small):
         theta = named_types(small.T)[name]
         d1, s1, S_star = planner(theta, pjm, small)
         b1 = pjm.clear(small, d1, s1, c_sigma(theta, small.delta), theta.d_firm(small.delta))
-        dispatch, b0, _, _ = respond(theta, tau, pjm, small)
+        dispatch, b0, _ = respond(theta, tau, pjm, small)
         assert S_star >= S(theta, pjm, small, dispatch) - 1e-4, name
         assert S_star >= S(theta, pjm, small, b0) - 1e-4, name
         assert np.isclose(S_star, S(theta, pjm, small, b1), rtol=1e-4), name  # B1 re-cleared reproduces S*
@@ -97,7 +97,7 @@ def test_fixed_point_cycles_when_the_band_straddles_a_step(pjm, small):
 def test_share_on_realized_pools_recovers_exactly(pjm, small):
     theta = named_types(small.T)["mover"]
     realized = Tariff(Marginal(np.ones(small.T)), Share(np.ones(small.T), ex_ante=False), Share(peak_hour(small.d_sys), ex_ante=False))
-    dispatch, b0, _, _ = respond(theta, realized, pjm, small)
+    dispatch, b0, _ = respond(theta, realized, pjm, small)
     rho = recovery(realized, small, dispatch, b0)
     assert abs(rho["reserve"]) < 1e-6 and abs(rho["investment"]) < 1e-6
 
@@ -106,7 +106,7 @@ def test_summary_row(pjm, small):
     for name in ("mover", "curtailable"):
         theta = named_types(small.T)[name]
         row = summary(theta, named_tariffs(small)["tau_0"], pjm, small)
-        assert row["efficiency"] >= -1e-4 and row["elected"] == "tau_0"
+        assert row["efficiency"] >= -1e-4 and row["tariff"] == "tau_0"
 
 
 def test_table_and_choice(small):
@@ -124,5 +124,5 @@ def test_curtailable_planner_is_not_hurt_by_the_instrument(pjm, small):
     S_curtailable = planner(types["curtailable"], pjm, tight)[2]
     S_mover = planner(types["mover"], pjm, tight)[2]
     assert S_curtailable >= S_mover - 1e-4
-    dispatch, _, _, _ = respond(types["curtailable"], named_tariffs(tight)["tau_0"], pjm, tight)
+    dispatch, _, _ = respond(types["curtailable"], named_tariffs(tight)["tau_0"], pjm, tight)
     assert S_curtailable >= S(types["curtailable"], pjm, tight, dispatch) - 1e-4

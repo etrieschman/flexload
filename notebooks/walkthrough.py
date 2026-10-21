@@ -10,7 +10,14 @@ from dataclasses import replace
 import numpy as np
 import polars as pl
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from pathlib import Path
+
 import flexload as fl
+
 
 pl.Config.set_tbl_rows(30)
 pl.Config.set_tbl_width_chars(160)
@@ -45,7 +52,6 @@ print(
 # capacity earns on the B0 path over the year, prorated to the window. It takes
 # 52 clearings and is cached. Under ERCOT the reserve demand curve is fit to the
 # data's net-load forecast error, with R̲ at the largest unit.
-
 market = fl.Market(reserve="ercot")  # or "pjm"; gamma, voll, long_run are fields
 market = replace(market, C_inv=fl.C_inv(market, weeks))
 print(
@@ -66,7 +72,6 @@ print(
 # ## B0: the inflexible path, and what it clears
 #
 # `clear` is 𝓜_ω(d, σ). The dispatch carries λ, μ and the cost of each layer.
-
 t0 = time.time()
 b0 = market.clear(
     scenario, scenario.delta, np.zeros(scenario.T), offer, theta.d_firm(scenario.delta)
@@ -82,7 +87,6 @@ print(
 # ## R: the exogenous price-taker's best response
 #
 # A QP in (d, σ). The belief is the B0 dispatch: prices, layer costs and the rate at δ are taken as given.
-
 d, sigma = fl.best_response(theta, tau, scenario, belief=b0)
 dispatch = market.clear(scenario, d, sigma, offer, theta.d_firm(scenario.delta))
 print(
@@ -94,7 +98,6 @@ print("hours the load moved most:", np.argsort(-np.abs(d - scenario.delta))[:8])
 # ## The bill, by layer, at settlement
 #
 # Each cost-share layer's cost comes from the dispatch its `ex_ante` flag names.
-
 bill_b0, bill_r = (
     fl.settle(tau, scenario, b0, b0),
     fl.settle(tau, scenario, dispatch, b0),
@@ -145,7 +148,6 @@ print(align.group_by("layer").agg(pl.col("wedge").abs().mean().alias("mean_abs_w
 # Respond, clear at the response, make that the belief, repeat. Under a step
 # merit order the map can cycle at scarcity hours; the harmonic step averages it
 # out and `history` shows whether it settled.
-
 t0 = time.time()
 d_c, s_c, dispatch_c, believed, history = fl.fixed_point(
     theta, tau, market, scenario, max_iter=20, damping=None
@@ -163,51 +165,47 @@ print(
 # The operator's objective is a rule over this table: max-min welfare over the
 # types, with the inflexible load left out, subject to recovery. Deliverable I
 # has one tariff, so the rule has nothing to choose yet; the rows are RQ1.
-
-# %%
 t0 = time.time()
 types = fl.named_types(scenario.T, "data_center")
-table = fl.table({k: types[k] for k in ("mover", "controllable", "emergency", "curtailable")}, fl.named_tariffs(scenario), [market], [scenario])
+table = fl.table(
+    {k: types[k] for k in ("mover", "controllable", "emergency", "curtailable")},
+    fl.named_tariffs(scenario),
+    [market],
+    [scenario],
+)
 print(f"{table.shape[0]} rows in {time.time() - t0:.0f}s")
-print(table.select("type", "S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility", "bill_total", "recovery_reserve", "fairness_reserve", "price_error"))
-
-# %% [markdown]
-# ## Learning across weeks: the fourth price belief
-#
-# The load averages the prices it saw. `price_error` is how far its belief sat
-# from what cleared.
-
-# trace, _ = fl.learn(theta, tau, market, weeks[28:36], eta=0.5)
-# print(trace)
+print(
+    table.select(
+        "type",
+        "S_B0",
+        "S_B1",
+        "S_R",
+        "efficiency",
+        "value_of_flexibility",
+        "bill_total",
+        "recovery_reserve",
+        "fairness_reserve",
+        "price_error",
+    )
+)
 
 # %% [markdown]
 # ## Figure
-try:
-    import matplotlib
+out = Path(__file__).parent / "figures" if "__file__" in globals() else Path("figures")
+out.mkdir(exist_ok=True)
+fig, ax = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+ax[0].plot(b0.lam, label="lambda at B0")
+ax[0].plot(dispatch.lam, label="lambda at R", alpha=0.7)
+ax[0].set_ylabel("$/MWh")
+ax[0].legend()
+ax[1].plot(scenario.delta, label="delta")
+ax[1].plot(d, label="d (exogenous price-taker)")
+ax[1].plot(d1, label="d (planner)", alpha=0.7)
+ax[1].set_ylabel("MW")
+ax[1].set_xlabel("hour of week")
+ax[1].legend()
+fig.tight_layout()
+fig.savefig(out / "walkthrough_week31.png", dpi=120)
+print("saved", out / "walkthrough_week31.png")
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from pathlib import Path
-
-    out = (
-        Path(__file__).parent / "figures"
-        if "__file__" in globals()
-        else Path("figures")
-    )
-    out.mkdir(exist_ok=True)
-    fig, ax = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-    ax[0].plot(b0.lam, label="lambda at B0")
-    ax[0].plot(dispatch.lam, label="lambda at R", alpha=0.7)
-    ax[0].set_ylabel("$/MWh")
-    ax[0].legend()
-    ax[1].plot(scenario.delta, label="delta")
-    ax[1].plot(d, label="d (exogenous price-taker)")
-    ax[1].plot(d1, label="d (planner)", alpha=0.7)
-    ax[1].set_ylabel("MW")
-    ax[1].set_xlabel("hour of week")
-    ax[1].legend()
-    fig.tight_layout()
-    fig.savefig(out / "walkthrough_week31.png", dpi=120)
-    print("saved", out / "walkthrough_week31.png")
-except ImportError:
-    pass
+# %%

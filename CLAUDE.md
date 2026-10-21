@@ -35,17 +35,17 @@ nothing else. Aligned 2026-10-21. Private repo.
 | θ = (ψ, β, A, p, 𝕀{sells reserve}, 𝕀{curtailable}); dᶠⁱʳᵐ = (1−β) minₜ δₜ | `LoadType(psi, beta, A, p, sells_reserve, curtailable)`; `theta.d_firm(delta)` (a level; None if not curtailable) | `load.py` |
 | blocks of hours in A; θ₀…θ₄ as a data center or a bitcoin mine | `blocks(T, hours)`; `named_types(T, business)` with `PSI`, `BETA`, `P`, `BUSINESS` | `load.py` |
 | c^σₜ = 2pψβδₜ; V(d, σ); 𝒟_θ | `c_sigma`, `V`, `feasible` | `load.py` |
-| the load's objective under a belief 𝓜̃ | `payoff(theta, tariff, scenario, belief, d, sigma, d_hat, curtailed)`; the belief is a `Dispatch` | `load.py` |
-| R (QP); menu election | `best_response(theta, tariff, scenario, belief, d_hat, curtailed)`; `elect(theta, menu, ...)` | `load.py` |
+| the load's objective under a belief 𝓜̃ | `payoff(theta, tariff, scenario, belief, d_bid, sigma_bid, d_hat, curtailed, knows_share)`; the belief is a `Dispatch`; the tildes (σ̃ where μ̃ ≥ c^σ, d̃ = dᶠⁱʳᵐ in anticipated hours) are built there | `load.py` |
+| R (QP) | `best_response(theta, tariff, scenario, belief, d_hat, curtailed, knows_share) -> (d_bid, sigma_bid)` | `load.py` |
 | consistent price-taker | `fixed_point(theta, tariff, market, scenario) -> (d, σ, dispatch, believed, history)` | `load.py` |
 | B1 | `planner(theta, market, scenario) -> (d, sigma, S_B1)` | `load.py` |
 | B0 | `market.clear(scenario, delta, zeros, c_sigma, d_firm)`; no function | — |
 | the load's belief about curtailment | hours where the believed λ is at VOLL (`anticipate=True` in `respond`, `fixed_point`) | `load.py`, `metrics.py` |
 | τ: a charge form per layer, marginal / split pool / two-part; slots 𝒲ᵏ (`hours`, a 0/1 vector), ex ante, credit, exempt | `Tariff(energy, reserve, investment, credit, exempt_curtailable)`; `Marginal(hours)`, `Share(hours, ex_ante)`, `TwoPart(hours, ex_ante, phi, T)`; `np.ones(T)`, `peak_hour(d_sys)` | `tariff.py` |
 | B = Σₖ Bᵏ, ∂Bᵏ/∂dₜ | `tariff.bill(d, sigma, realized, d_other, b0, d_hat, own, knows_share)`, `tariff.marginal(...)`; `realized` is the dispatch at the bid, `b0` the one at (δ, 0); every layer is hourly (the investment cost is spread over its hours); cvxpy expressions, `.value` for numbers. `marginal` holds Cᵏ fixed: exact ex ante, missing ∂Cᵏ/∂d ex post | `tariff.py` |
-| τ₀ today; τ₁…τ₅ for Workshop II (τ₅ = exemption menu) | `named_tariffs(scenario)` returns τ₀ only (Erich, 2026-10-21; the others are commented in place); tests and the walkthrough build variants with `replace`; `Menu(options)` | `tariff.py` |
+| τ₀ today | `named_tariffs(scenario)` returns τ₀ only, every slot spelled out (Erich, 2026-10-21). No other tariff, no menu, no election in the code; Workshop II adds them. | `tariff.py` |
 | settlement; S; ρᵏ; Δᵏₜ; fairness; efficiency S^B1 − S^R | `settle`, `S`, `recovery`, `alignment`, `fairness`; `summary` (columns `S_B0, S_B1, S_R, efficiency, price_error`) | `metrics.py` |
-| R under a belief; the operator's table; max-min / expected welfare s.t. g(ρ) ≤ 0 | `respond(theta, tariff, market, scenario, belief, anticipate)`; `table(types, tariffs, markets, scenarios)`; `choose(table, rule, prior, g, epsilon)` | `metrics.py` |
+| R under a belief; the operator's table; max-min / expected welfare s.t. g(ρ) ≤ 0 | `respond(theta, tariff, market, scenario, belief, anticipate) -> (dispatch, b0, believed)`; `summary`; `table(types, tariffs, markets, scenarios)`; `choose(table, rule, prior, g, epsilon)` | `metrics.py` |
 | the learner (fourth belief) | `learn(theta, tariff, market, scenarios, eta)`; takes the posted rate | `metrics.py` |
 
 Conventions: capitalized = class holding data; lowercase = function; order is always
@@ -57,7 +57,7 @@ inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 | topic | decision |
 |---|---|
 | accounting | c^σᵀσ sits in V **and** in the LP objective (the load offers at cost). Welfare counts it once: `S = V − C_sys + c^σᵀσ`. The reserve payment μᵀσ is a **credit layer of the bill** (`Tariff.credit`); the load's payoff is V − B. |
-| the tariff is a function | three charge forms (`Marginal`, `Share`, `TwoPart`), one per layer, energy included (Erich, 2026-10-21: energy is a layer like the others), plus the `credit` and `exempt_curtailable` slots. No enums, no strings, no lowercase wrappers: hours 𝒲ᵏ are weight vectors, `ex_ante` is a bool, φ and T are computed from the pool unless `T` is given. τ ranges over a finite set; φ and ε are swept, not optimized (report §3). |
+| the tariff is a function | three charge forms (`Marginal`, `Share`, `TwoPart`), one per layer, energy included (Erich, 2026-10-21: energy is a layer like the others), plus the `credit` and `exempt_curtailable` slots. Every layer is hourly; the investment cost is spread over its hours. No enums, no strings, no lowercase wrappers: hours 𝒲ᵏ are 0/1 vectors, `ex_ante` is a bool, φ and T are computed from the pool unless `T` is given. τ ranges over a finite set; φ and ε are swept, not optimized (report §3). |
 | what the bill reads | a `Dispatch` (λ, μ and the pools ride on it) plus d°. Each layer's `ex_ante` flag picks the ex-ante or realized dispatch. Inside the load's objective the dispatch is its belief; a price-setter's belief would be a dispatch whose prices are expressions. Revised 2026-10-19 from "explicit arguments": the nine-argument signatures were the cost. |
 | own share (was: rate-taker) | revised 2026-10-21. The exogenous price-taker takes the **posted average rate** at x̂ = δ (ERCOT posts a provisional share). The consistent price-taker **knows its share**: its charge is linearized at x̂ with the true slope Cᵏx°/(x̂+x°)², and the fixed point iterates x̂ with the prices, so it is exact at convergence. The exact charge is concave in x, so one QP cannot do it; the iteration can. `knows_share` is the flag; `fixed_point` sets it. |
 | beliefs | no belief class. A price-taker's belief is a `Dispatch`; the learner's state (`learn`) is a dispatch with averaged fields; a price-setter's belief is the market itself (bilevel, not built; `planner` already embeds dispatch with the load's bid as a variable, which is its shape). The operator knows which belief the load holds (report §3); RQ4 relaxes that. |
@@ -77,8 +77,8 @@ inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 ```
 src/flexload/
   system.py   Scenario; scenario, windows, tighten, margin; ORDC.from_lolp; Dispatch; Market (ordc_for, C_sys, constraints, clear, marginal_cost); C_inv
-  tariff.py   peak_hour; Marginal, Share, TwoPart; Tariff (bill, marginal); Menu; total; named_tariffs
-  load.py     LoadType; blocks; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; payoff; best_response; elect; fixed_point; planner
+  tariff.py   peak_hour; Marginal, Share, TwoPart; Tariff (bill, marginal); total; named_tariffs (τ₀)
+  load.py     LoadType; blocks; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; payoff; best_response; fixed_point; planner
   metrics.py  settle; S; recovery; alignment; fairness; respond; summary; table; choose; learn
 notebooks/walkthrough.py   jupytext cells; the documentation
 tests/        conftest (3-generator, 4-hour scenario); test_system, test_tariff, test_load
@@ -96,10 +96,12 @@ Imports run one way: system ← tariff ← load ← metrics.
   2026-10-21: one cost formula `C_sys`, Π on the dispatch, bid/outcome names, `C_inv`
   not missing money, ORDC fit from the data's forecast error, κ and single-use helpers gone.
   With Gurobi: clearing ≈ 1.3 s, planner ≈ 2–3 s.
-- Built: both reserve constructs, short and long run, the curtailable type and the
-  exemption menu (τ₅), the three charge forms, ex-ante and ex-post costs, the
-  price-taker QP, the consistent fixed point, the planner, the outcomes, the learner
-  across windows, the operator table and two welfare rules with a recovery constraint.
+- Built: both reserve constructs, short and long run, the curtailable type, the three
+  charge forms, ex-ante and ex-post costs, the price-taker QP (posted rate or known
+  share), the consistent fixed point, the planner, the outcomes, the learner across
+  windows, the operator table and two welfare rules with a recovery constraint. Only
+  τ₀ is defined. Erich's reviews of system.py, tariff.py (2026-10-21) applied; load.py
+  and metrics.py cleaned to the same criticisms before his read.
 - Not built: the price-setter (bilevel); 𝒦ʳᵉˢᵖ (a filter over bill layers); experiment
   grids over 52 weeks and seeds; figures beyond the walkthrough's one.
 

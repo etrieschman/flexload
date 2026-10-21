@@ -230,14 +230,6 @@ def _base(hours: np.ndarray, d):
     return cp.multiply(hours, d) if isinstance(d, cp.Expression) else hours * d
 
 
-@dataclass(frozen=True)
-class Menu:
-    """The load elects one option (``load.elect``)."""
-
-    options: tuple[Tariff, ...]
-    name: str = ""
-
-
 def total(bill: dict):
     return sum(bill.values())
 
