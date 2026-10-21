@@ -129,9 +129,9 @@ print(align.group_by("layer").agg(pl.col("wedge").abs().mean().alias("mean_abs_w
 # and R, efficiency (S_B1 - S_R), the value of flexibility (S_B1 - S_B0), the bill.
 print("\nBenchmarks: B0 is step 2; B1 is the planner")
 t0 = time.time()
-d_b1, sigma_b1, S_B1 = fl.planner(theta, market, scenario)
+d_b1, sigma_b1 = fl.planner(theta, market, scenario)
 print(f"planner time [s]:\t{time.time() - t0:.1f}")
-row = fl.summary(theta, tau, market, scenario, b1=(d_b1, sigma_b1, S_B1))
+row = fl.summary(theta, tau, market, scenario, b1=(d_b1, sigma_b1))
 for k in ("S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility", "bill_total"):
     print(f"{k} [$]:\t{row[k]:,.0f}")
 
@@ -146,11 +146,11 @@ d_c, s_c, dispatch_c, believed, history = fp
 print(f"rounds [count]:\t{len(history)}")
 print(f"fixed-point time [s]:\t{time.time() - t0:.0f}")
 print(f"last change in the bid [MW]:\t{history[-1]:.2f}")
-S_R = fl.S(theta, market, scenario, dispatch)
-S_R_c = fl.S(theta, market, scenario, dispatch_c)
+S_R = float(fl.S(theta, market, scenario, dispatch.d, dispatch.sigma, dispatch.u, dispatch.r, dispatch.shed, dispatch.y, dispatch.Pi).value)
+S_R_c = float(fl.S(theta, market, scenario, dispatch_c.d, dispatch_c.sigma, dispatch_c.u, dispatch_c.r, dispatch_c.shed, dispatch_c.y, dispatch_c.Pi).value)
 print(f"welfare at R, exogenous belief [$]:\t{S_R:,.0f}")
 print(f"welfare at R, consistent belief [$]:\t{S_R_c:,.0f}")
-print(f"welfare at B1 [$]:\t{S_B1:,.0f}")
+print(f"welfare at B1 [$]:\t{row['S_B1']:,.0f}")
 
 # %%
 # The table for RQ1: steps 2 to 5 and both benchmarks for every load type under
