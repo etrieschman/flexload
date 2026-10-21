@@ -7,7 +7,7 @@
     tau      = named_tariffs(scenario)["tau_0"]                  # τ, today's tariff
     theta    = named_types(scenario.T, "data_center")["mover"]   # θ
     b0       = market.clear(scenario, scenario.delta, 0, c_sigma(theta, scenario.delta))   # B0
-    d, sigma = best_response(theta, tau, scenario, belief=b0)                              # R
+    d, sigma = best_response(theta, tau, scenario, b0, d_hat=scenario.delta, curtailed=None, knows_share=False)   # R
     dispatch = market.clear(scenario, d, sigma, c_sigma(theta, scenario.delta))
     bill     = settle(tau, scenario, dispatch, b0)
     d1, s1, S_B1 = planner(theta, market, scenario)                                       # B1

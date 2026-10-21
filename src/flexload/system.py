@@ -472,10 +472,13 @@ class Market:
 
 
 def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
-    """The annual cost of the investment layer: Σ_j (cⁱⁿᵛ_j − Σ_t ν_jt) ū_j on
-    the B0 path (δ, 0) over the year, investment cost less the rents capacity
-    earns in the market, in $. ``clear`` prorates it to the window by T/8760.
-    Cached under ``~/.cache/flexload`` by market fields and the year's data."""
+    """The annual cost of the investment layer: max(0, Σ_j (cⁱⁿᵛ_j − Σ_t ν_jt) ū_j)
+    on the B0 path (δ, 0) over the year, investment cost less the rents capacity
+    earns in the market, in $. The floor at zero: a market whose prices overpay
+    the fleet has nothing left to collect, so the layer bills zero rather than
+    crediting the load. ``clear`` prorates it to the window by T/8760. Cached
+    under ``~/.cache/flexload`` by market fields and the year's data; the cache
+    keeps the signed value."""
     key = None
     if cache:
         h = hashlib.sha1(repr((market.reserve, market.gamma, market.voll)).encode())
@@ -492,7 +495,7 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
                 h.update(np.ascontiguousarray(a).tobytes())
         key = Path.home() / ".cache" / "flexload" / "C_inv" / f"{h.hexdigest()}.json"
         if key.exists():
-            return float(json.loads(key.read_text())["annual"])
+            return max(float(json.loads(key.read_text())["annual"]), 0.0)
     m = Market(
         market.reserve,
         market.gamma,
@@ -526,7 +529,7 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
                 }
             )
         )
-    return annual
+    return max(annual, 0.0)
 
 
 def _value(v) -> np.ndarray:

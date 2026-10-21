@@ -95,7 +95,7 @@ def test_C_inv_is_annual_cost_less_rents(pjm, small):
     annual = C_inv(pjm, [small] * 3, cache=False)
     dp = b0(pjm, small)
     per_window = float(np.sum((small.cost_inv * small.T / HOURS_PER_YEAR - dp.nu.sum(axis=1)) * small.nameplate))
-    assert np.isclose(annual, 3 * per_window)
+    assert np.isclose(annual, max(3 * per_window, 0.0))
 
 
 def test_tighten_sets_the_annual_tightest_hour(small):

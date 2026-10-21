@@ -87,7 +87,7 @@ print(
 # ## R: the exogenous price-taker's best response
 #
 # A QP in (d, σ). The belief is the B0 dispatch: prices, layer costs and the rate at δ are taken as given.
-d, sigma = fl.best_response(theta, tau, scenario, belief=b0)
+d, sigma = fl.best_response(theta, tau, scenario, belief=b0, d_hat=scenario.delta, curtailed=None, knows_share=False)
 dispatch = market.clear(scenario, d, sigma, offer, theta.d_firm(scenario.delta))
 print(
     f"energy shifted {np.abs(d - scenario.delta).sum():,.0f} MWh over the week; energy conserved: {np.isclose(d.sum(), scenario.delta.sum())}"
@@ -118,7 +118,7 @@ t0 = time.time()
 d1, s1, S_B1 = fl.planner(theta, market, scenario)
 b1 = market.clear(scenario, d1, s1, offer, theta.d_firm(scenario.delta))
 print(f"planner in {time.time() - t0:.1f}s")
-row = fl.summary(theta, tau, market, scenario)
+row = fl.summary(theta, tau, market, scenario, belief="exogenous", anticipate=False)
 print(
     {
         k: round(v, 1) if isinstance(v, float) else v
@@ -172,6 +172,8 @@ table = fl.table(
     fl.named_tariffs(scenario),
     [market],
     [scenario],
+    belief="exogenous",
+    anticipate=False,
 )
 print(f"{table.shape[0]} rows in {time.time() - t0:.0f}s")
 print(

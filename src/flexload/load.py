@@ -1,5 +1,5 @@
 """The load: its type θ, value V, offer price c^σ, and three strategies.
-B0 bids δ and offers nothing. R best-responds to the tariff under a belief.
+B0 bids (δ, 0). R best-responds to the tariff under a belief.
 B1 is the planner's optimum. Report §3, "Flexible load".
 
 The load bids (d_bid, sigma_bid). Dispatch returns what it consumed and what
@@ -32,8 +32,8 @@ class LoadType:
     believed chance a sold MW is called. The two designations are public.
     ``sells_reserve``: offers σ at c^σ. ``curtailable``: declares a firm level
     before the window; the operator may curtail it to that level where serving it
-    costs more than VOLL, unpaid, in exchange for its connection. A curtailable
-    load offers no reserve: the same MW cannot be both headroom and σ."""
+    costs more than VOLL, unpaid, in exchange for its connection. A load sells
+    reserve or is curtailable, never both: a MW is headroom or σ."""
 
     psi: float  # weight on following δ, $/MW²h
     beta: float  # tolerated deviation as a fraction of δ
@@ -43,15 +43,14 @@ class LoadType:
     curtailable: bool = False
     name: str = ""
 
-    @property
-    def offers(self) -> bool:
-        """Whether σ is a decision: sells reserve and is not curtailable."""
-        return self.sells_reserve and not self.curtailable
+    def __post_init__(self):
+        if self.sells_reserve and self.curtailable:
+            raise ValueError("a load sells reserve or is curtailable, never both")
 
     def d_firm(self, delta: np.ndarray) -> np.ndarray | None:
         """The declared firm level, one MW amount over the window:
         dᶠⁱʳᵐ = (1 − β) min_t δ_t, the largest cut the type tolerates in its
-        lowest hour. None for a load that is not curtailable."""
+        lowest hour. None unless the load is curtailable."""
         if not self.curtailable:
             return None
         return np.full(delta.shape, (1.0 - self.beta) * float(np.min(delta)))
@@ -60,7 +59,7 @@ class LoadType:
 def blocks(T: int, hours: int | None) -> np.ndarray:
     """A for blocks of ``hours`` each. T → one block, energy conserved over the
     window (A = 1ᵀ). 1 → every hour its own block, inflexible (A = I).
-    None → no block, elastic (A = 0)."""
+    None → A is empty, elastic (A = 0)."""
     if hours is None:
         return np.zeros((0, T))
     starts = range(0, T, hours)
@@ -112,7 +111,7 @@ def feasible(theta: LoadType, delta: np.ndarray, d_bid, sigma_bid) -> list:
     cons = [d_bid >= 0.0, d_bid - delta <= theta.beta * delta, delta - d_bid <= theta.beta * delta]
     if theta.A.shape[0] > 0:
         cons.append(theta.A @ d_bid == theta.A @ delta)
-    if theta.offers:
+    if theta.sells_reserve:
         cons += [sigma_bid >= 0.0, d_bid - sigma_bid >= (1.0 - theta.beta) * delta]
     return cons
 
@@ -126,7 +125,7 @@ def payoff(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch
     in the hours ``curtailed`` where it anticipates curtailment, else d_bid."""
     delta = scenario.delta
     sigma_tilde = sigma_bid
-    if theta.offers:
+    if theta.sells_reserve:
         clears = (belief.mu >= c_sigma(theta, delta) - 1e-12).astype(float)
         sigma_tilde = cp.multiply(clears, sigma_bid)
     d_tilde = d_bid
@@ -141,14 +140,14 @@ def best_response(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: D
     """max payoff over 𝒟_θ: a QP. ``d_hat`` is the consumption the bill is
     linearized at; it defaults to the belief's. ``knows_share``: the load knows
     its charge is its share of each pool (the consistent price-taker); otherwise
-    it takes the posted average rate. Where the offer is believed not to clear
-    the load offers nothing. Returns the bid (d_bid, sigma_bid)."""
+    it takes the posted average rate. In the hours where the believed μ is below
+    c^σ the load offers zero. Returns the bid (d_bid, sigma_bid)."""
     T, delta = scenario.T, scenario.delta
     d_hat = belief.d if d_hat is None else d_hat
     d_bid = cp.Variable(T)
-    sigma_bid = cp.Variable(T) if theta.offers else np.zeros(T)
+    sigma_bid = cp.Variable(T) if theta.sells_reserve else np.zeros(T)
     cons = feasible(theta, delta, d_bid, sigma_bid)
-    if theta.offers:
+    if theta.sells_reserve:
         clears = belief.mu >= c_sigma(theta, delta) - 1e-12
         if not clears.all():
             cons.append(sigma_bid[~clears] == 0.0)
@@ -157,7 +156,7 @@ def best_response(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: D
     problem.solve(solver=solver)
     if problem.status not in ("optimal", "optimal_inaccurate"):
         raise RuntimeError(f"best response failed: {problem.status}")
-    if theta.offers:
+    if theta.sells_reserve:
         sigma_bid = np.maximum(np.asarray(sigma_bid.value), 0.0)
     return np.asarray(d_bid.value), sigma_bid
 
@@ -203,8 +202,8 @@ def planner(theta: LoadType, market: Market, scenario: Scenario, solver: str = "
     T, J, delta = scenario.T, scenario.J, scenario.delta
     offer = c_sigma(theta, delta)
     d = cp.Variable(T)
-    sigma_bid = cp.Variable(T) if theta.offers else np.zeros(T)
-    sigma = cp.Variable(T, nonneg=True) if theta.offers else np.zeros(T)  # what clears
+    sigma_bid = cp.Variable(T) if theta.sells_reserve else np.zeros(T)
+    sigma = cp.Variable(T, nonneg=True) if theta.sells_reserve else np.zeros(T)  # what clears
     u, r, shed = cp.Variable((J, T), nonneg=True), cp.Variable((J, T), nonneg=True), cp.Variable(T, nonneg=True)
     y = cp.Variable(J, nonneg=True) if market.long_run else scenario.nameplate
     d_firm = theta.d_firm(delta) if theta.curtailable else d
@@ -219,6 +218,6 @@ def planner(theta: LoadType, market: Market, scenario: Scenario, solver: str = "
     problem.solve(solver=solver)
     if problem.status not in ("optimal", "optimal_inaccurate"):
         raise RuntimeError(f"planner failed: {problem.status}")
-    if theta.offers:
+    if theta.sells_reserve:
         sigma_bid = np.maximum(np.asarray(sigma_bid.value), 0.0)
     return np.asarray(d.value), sigma_bid, float(problem.value)
