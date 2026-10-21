@@ -72,9 +72,9 @@ def test_welfare_ordering_B0_R_B1(pjm, small):
         theta = named_types(small.T)[name]
         d1, s1, S_star = planner(theta, pjm, small)
         b1 = pjm.clear(small, d1, s1, c_sigma(theta, small.delta), theta.d_firm(small.delta))
-        dispatch, ex_ante, _, _ = respond(theta, tau, pjm, small)
+        dispatch, b0, _, _ = respond(theta, tau, pjm, small)
         assert S_star >= S(theta, pjm, small, dispatch) - 1e-4, name
-        assert S_star >= S(theta, pjm, small, ex_ante) - 1e-4, name
+        assert S_star >= S(theta, pjm, small, b0) - 1e-4, name
         assert np.isclose(S_star, S(theta, pjm, small, b1), rtol=1e-4), name  # B1 re-cleared reproduces S*
 
 
@@ -97,8 +97,8 @@ def test_fixed_point_cycles_when_the_band_straddles_a_step(pjm, small):
 def test_share_on_realized_pools_recovers_exactly(pjm, small):
     theta = named_types(small.T)["mover"]
     realized = Tariff(Marginal(np.ones(small.T)), Share(np.ones(small.T), ex_ante=False), Share(peak_hour(small.d_sys), ex_ante=False))
-    dispatch, ex_ante, _, _ = respond(theta, realized, pjm, small)
-    rho = recovery(realized, small, dispatch, ex_ante)
+    dispatch, b0, _, _ = respond(theta, realized, pjm, small)
+    rho = recovery(realized, small, dispatch, b0)
     assert abs(rho["reserve"]) < 1e-6 and abs(rho["investment"]) < 1e-6
 
 

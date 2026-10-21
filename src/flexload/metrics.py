@@ -22,12 +22,12 @@ from .tariff import Menu, Tariff, total
 # ----------------------------------------------------------------------------
 # settlement and welfare
 # ----------------------------------------------------------------------------
-def settle(tariff: Tariff, scenario: Scenario, realized: Dispatch, ex_ante: Dispatch, own: bool = True) -> dict[str, float]:
+def settle(tariff: Tariff, scenario: Scenario, realized: Dispatch, b0: Dispatch, own: bool = True) -> dict[str, float]:
     """The bill in dollars. ``own=False`` bills everyone else as one load."""
     if own:
-        bill = tariff.bill(realized.d, realized.sigma, realized, scenario.d_other, ex_ante)
+        bill = tariff.bill(realized.d, realized.sigma, realized, scenario.d_other, b0)
     else:
-        bill = tariff.bill(scenario.d_other, np.zeros(scenario.T), realized, realized.d, ex_ante, own=False)
+        bill = tariff.bill(scenario.d_other, np.zeros(scenario.T), realized, realized.d, b0, own=False)
     return {k: float(v.value) for k, v in bill.items()}
 
 
@@ -41,25 +41,25 @@ def S(theta: LoadType, market: Market, scenario: Scenario, dispatch: Dispatch) -
 # ----------------------------------------------------------------------------
 # outcomes per layer (welfare and efficiency are in ``summary``)
 # ----------------------------------------------------------------------------
-def recovery(tariff: Tariff, scenario: Scenario, realized: Dispatch, ex_ante: Dispatch) -> dict[str, float]:
+def recovery(tariff: Tariff, scenario: Scenario, realized: Dispatch, b0: Dispatch) -> dict[str, float]:
     """ρᵏ = Cᵏ − Bᵏ(dᶜᵘʳᵗ, σᶜˡʳ) − Bᵏ(d°, 0): the layer's realized cost less what the load and everyone else pay."""
-    own, others = settle(tariff, scenario, realized, ex_ante), settle(tariff, scenario, realized, ex_ante, own=False)
+    own, others = settle(tariff, scenario, realized, b0), settle(tariff, scenario, realized, b0, own=False)
     return {
         "reserve": float(realized.C_res.sum()) - own["reserve"] - others["reserve"],
         "investment": realized.C_inv - own["investment"] - others["investment"],
     }
 
 
-def alignment(tariff: Tariff, market: Market, scenario: Scenario, realized: Dispatch, ex_ante: Dispatch) -> pl.DataFrame:
+def alignment(tariff: Tariff, market: Market, scenario: Scenario, realized: Dispatch, b0: Dispatch) -> pl.DataFrame:
     """Δᵏ_t = ∂Bᵏ/∂d_t − ∂Cᵏ_sys/∂d_t, one row per hour and layer."""
-    charge, cost = tariff.marginal(realized.d, realized, scenario.d_other, ex_ante), market.marginal_cost(realized)
+    charge, cost = tariff.marginal(realized.d, realized, scenario.d_other, b0), market.marginal_cost(realized)
     rows = [(t, k, float(charge[k][t]), float(cost[k][t])) for k in cost for t in range(scenario.T)]
     return pl.DataFrame(rows, schema=["t", "layer", "marginal_charge", "marginal_cost"], orient="row").with_columns((pl.col("marginal_charge") - pl.col("marginal_cost")).alias("wedge"))
 
 
-def fairness(tariff: Tariff, scenario: Scenario, responding: Dispatch, planned: Dispatch, ex_ante: Dispatch) -> dict[str, float]:
+def fairness(tariff: Tariff, scenario: Scenario, responding: Dispatch, planned: Dispatch, b0: Dispatch) -> dict[str, float]:
     """Bᵏ(d°)|R − Bᵏ(d°)|B1: how everyone else's bill moves when the load plays R instead of B1."""
-    at_r, at_b1 = settle(tariff, scenario, responding, ex_ante, own=False), settle(tariff, scenario, planned, ex_ante, own=False)
+    at_r, at_b1 = settle(tariff, scenario, responding, b0, own=False), settle(tariff, scenario, planned, b0, own=False)
     return {k: at_r[k] - at_b1[k] for k in ("energy", "reserve", "investment")}
 
 
@@ -73,28 +73,28 @@ def respond(theta: LoadType, tariff: Tariff | Menu, market: Market, scenario: Sc
     to, and the elected tariff."""
     delta, T = scenario.delta, scenario.T
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
-    ex_ante = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
-    curtailed = (ex_ante.lam >= market.voll - 1e-6) if anticipate else None  # shortage hours: λ̃ at VOLL
-    tau = elect(theta, tariff, scenario, ex_ante, curtailed=curtailed) if isinstance(tariff, Menu) else tariff
+    b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
+    curtailed = (b0.lam >= market.voll - 1e-6) if anticipate else None  # shortage hours: λ̃ at VOLL
+    tau = elect(theta, tariff, scenario, b0, curtailed=curtailed) if isinstance(tariff, Menu) else tariff
     if belief == "exogenous":
-        d, sigma = best_response(theta, tau, scenario, ex_ante, curtailed=curtailed)
-        dispatch, believed = market.clear(scenario, d, sigma, offer, d_firm), ex_ante
+        d, sigma = best_response(theta, tau, scenario, b0, curtailed=curtailed)
+        dispatch, believed = market.clear(scenario, d, sigma, offer, d_firm), b0
     elif belief == "consistent":
         d, sigma, dispatch, believed, _ = fixed_point(theta, tau, market, scenario, anticipate)
     else:
         raise ValueError(belief)
-    return dispatch, ex_ante, believed, tau
+    return dispatch, b0, believed, tau
 
 
 def summary(theta: LoadType, tariff: Tariff | Menu, market: Market, scenario: Scenario, belief: str = "exogenous", anticipate: bool = False, b1: tuple | None = None) -> dict:
     """One row: welfare at B0, B1 and R, efficiency, the bill by layer, recovery,
     fairness, and the belief's price error. ``b1`` is ``(d, σ, S^B1)`` from
     ``planner`` if already solved."""
-    dispatch, ex_ante, believed, tau = respond(theta, tariff, market, scenario, belief, anticipate)
+    dispatch, b0, believed, tau = respond(theta, tariff, market, scenario, belief, anticipate)
     d1, s1, S_B1 = planner(theta, market, scenario) if b1 is None else b1
     planned = market.clear(scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta))
-    bill, rho, fair = settle(tau, scenario, dispatch, ex_ante), recovery(tau, scenario, dispatch, ex_ante), fairness(tau, scenario, dispatch, planned, ex_ante)
-    S_R, S_B0 = S(theta, market, scenario, dispatch), S(theta, market, scenario, ex_ante)
+    bill, rho, fair = settle(tau, scenario, dispatch, b0), recovery(tau, scenario, dispatch, b0), fairness(tau, scenario, dispatch, planned, b0)
+    S_R, S_B0 = S(theta, market, scenario, dispatch), S(theta, market, scenario, b0)
     return {
         "tariff": tariff.name, "elected": tau.name, "type": theta.name, "market": market.reserve, "belief": belief, "start": scenario.start,
         "S_B0": S_B0, "S_B1": S_B1, "S_R": S_R, "efficiency": S_B1 - S_R, "value_of_flexibility": S_B1 - S_B0,
@@ -155,11 +155,11 @@ def learn(theta: LoadType, tariff: Tariff, market: Market, scenarios: list[Scena
     rows, dispatches, belief = [], [], None
     for scenario in scenarios:
         offer, d_firm = c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta)
-        ex_ante = market.clear(scenario, scenario.delta, np.zeros(scenario.T), offer, d_firm)
-        belief = ex_ante if belief is None else belief
+        b0 = market.clear(scenario, scenario.delta, np.zeros(scenario.T), offer, d_firm)
+        belief = b0 if belief is None else belief
         d, sigma = best_response(theta, tariff, scenario, belief)
         dispatch = market.clear(scenario, d, sigma, offer, d_firm)
-        bill = settle(tariff, scenario, dispatch, ex_ante)
+        bill = settle(tariff, scenario, dispatch, b0)
         rows.append({
             "start": scenario.start, "S": S(theta, market, scenario, dispatch), "bill_total": sum(bill.values()),
             "price_error": float(np.abs(dispatch.lam - belief.lam).mean()), "energy_shifted": float(np.abs(d - scenario.delta).sum()),

@@ -2,13 +2,14 @@
 Cᵏ. The bill is B = Σₖ Bᵏ. Report §3, "Tariff".
 
 Each layer k ∈ {energy, reserve, investment} has a charge form on a base x, the
-load's consumption in the layer's hours 𝒲ᵏ (``hours``, a 0/1 vector over t).
-Energy and reserve have an hourly cost Cᵏ_t, so their base is hours ∘ d;
-investment has one cost for the window, so its base is hoursᵀd.
+load's consumption in the layer's hours 𝒲ᵏ (``hours``, a 0/1 vector over t):
+x = hours ∘ d. Every layer is hourly. Energy and reserve have an hourly cost
+Cᵏ_t from dispatch; investment has one cost for the window, which the tariff
+spreads over its hours, Cⁱⁿᵛ_t = Cⁱⁿᵛ hours_t / Σ hours, all of it on t* under τ₀.
 
-    Marginal(hours)                 Bᵏ = Σ_t price_t x_t            the layer's price on each MWh
-    Share(hours, ex_ante)           Bᵏ = Σ_t Cᵏ_t x_t / (x̂_t + x°_t)  the load's share of the cost
-    TwoPart(hours, ex_ante, phi, T) Bᵏ = φ x + T                     a marginal rate plus a lump sum
+    Marginal(hours)                 Bᵏ = Σ_{t∈𝒲ᵏ} price_t d_t                 the layer's price on each MWh
+    Share(hours, ex_ante)           Bᵏ = Σ_{t∈𝒲ᵏ} Cᵏ_t d_t / (d̂_t + d°_t)       the load's share of the cost
+    TwoPart(hours, ex_ante, phi, T) Bᵏ = Σ_{t∈𝒲ᵏ} φ_t d_t + T                 a marginal rate plus a lump sum
 
 x̂ is the load's believed consumption, where its charge is linearized so that
 its best response is a QP. A load that takes the posted rate pays the average
@@ -18,8 +19,8 @@ share pays along the tangent of the exact charge at x̂, slope Cᵏ x°/(x̂ + x
 split pool is exact either way.
 
 Slots: ``ex_ante`` reads Cᵏ from the dispatch at the load's preferred profile
-(δ, 0), as ERCOT procures reserve against a forecast; otherwise from the
-dispatch at the bid. ``credit`` pays a load that sells reserve μᵀσ.
+(δ, 0), the B0 dispatch ``b0``, as ERCOT procures reserve against a forecast;
+otherwise from the dispatch at the bid, ``realized``. Each layer's form sets it. ``credit`` pays a load that sells reserve μᵀσ.
 ``exempt_curtailable`` frees a curtailable load from the reserve charge (τ₅).
 
 Formulas are cvxpy expressions on numbers or variables alike; read ``.value``.
@@ -52,7 +53,9 @@ class Marginal:
     """Bᵏ = Σ_t price_t x_t: the layer's price on each MWh. Energy under τ₀, price λ."""
 
     hours: np.ndarray
-    ex_ante: bool = False  # the price is the realized one; kept so every form has the slot
+    ex_ante: bool = (
+        False  # the price is the realized one; kept so every form has the slot
+    )
 
     def charge(self, x, x_hat, x_other, pool, price, knows_share: bool = False):
         return cp.sum(cp.multiply(price, x))
@@ -63,8 +66,7 @@ class Marginal:
 
 @dataclass(frozen=True)
 class Share:
-    """Split pool: Bᵏ = Cᵏ · x / (x̂ + x°), the load's share of the layer's cost by
-    its share of consumption. Hourly for energy and reserve, one number for investment."""
+    """Split pool: Bᵏ = Σ_t Cᵏ_t x_t / (x̂_t + x°_t), the load's share of the layer's cost by its share of consumption, hour by hour."""
 
     hours: np.ndarray
     ex_ante: bool = True
@@ -73,17 +75,17 @@ class Share:
         """Linear in x around x̂. Posted rate: the average rate at x̂ times x.
         Knows its share: the tangent of Cᵏ x/(x + x°) at x̂, slope Cᵏ x°/(x̂ + x°)².
         Both equal the exact charge when x = x̂, as at settlement."""
-        total = x_hat + x_other
+        rate = _divide(pool, x_hat + x_other)  # the average rate at x̂; zero outside the layer's hours
         if not knows_share:
-            return cp.sum(cp.multiply(pool / total, x))
-        at_hat = np.sum(pool * x_hat / total)
-        return at_hat + cp.sum(cp.multiply(pool * x_other / total**2, x - x_hat))
+            return cp.sum(cp.multiply(rate, x))
+        slope = _divide(rate * x_other, x_hat + x_other)  # Cᵏ x° / (x̂ + x°)²
+        return np.sum(rate * x_hat) + cp.sum(cp.multiply(slope, x - x_hat))
 
     def marginal(self, x, x_other, pool, price):
         """∂Bᵏ/∂x at settlement (x̂ = x), holding Cᵏ fixed: Cᵏ x° / (x + x°)².
         Exact for an ex-ante pool. For an ex-post pool the term
         (∂Cᵏ/∂x)·x/(x + x°) is missing; it needs ∂μ/∂d, the price-setter's map."""
-        return pool * x_other / (x + x_other) ** 2
+        return _divide(_divide(pool, x + x_other) * x_other, x + x_other)
 
 
 @dataclass(frozen=True)
@@ -132,18 +134,18 @@ class Tariff:
     exempt_curtailable: bool = False
     name: str = ""
 
-    def _layers(self, realized: Dispatch, ex_ante: Dispatch) -> list:
-        """The three layers as (name, form, pool, price, hourly). The pool comes
-        from the ex-ante or the realized dispatch as the form's flag says; the
-        price is always the realized one. Energy and reserve are hourly;
-        investment is one number for the window."""
-        energy = ex_ante if self.energy.ex_ante else realized
-        reserve = ex_ante if self.reserve.ex_ante else realized
-        investment = ex_ante if self.investment.ex_ante else realized
+    def _layers(self, realized: Dispatch, b0: Dispatch) -> list:
+        """The three layers as (name, form, pool, price). The pool is hourly and
+        comes from ``b0`` if the form is ex ante, else from ``realized``; the
+        price is always the realized one."""
+        energy = b0 if self.energy.ex_ante else realized
+        reserve = b0 if self.reserve.ex_ante else realized
+        investment = b0 if self.investment.ex_ante else realized
+        hours = self.investment.hours
         return [
-            ("energy", self.energy, energy.C_energy, realized.lam, True),
-            ("reserve", self.reserve, reserve.C_res, realized.mu, True),
-            ("investment", self.investment, investment.C_inv, 1.0, False),
+            ("energy", self.energy, energy.C_energy, realized.lam),
+            ("reserve", self.reserve, reserve.C_res, realized.mu),
+            ("investment", self.investment, investment.C_inv * hours / hours.sum(), np.ones(hours.shape)),
         ]
 
     def bill(
@@ -152,18 +154,18 @@ class Tariff:
         sigma,
         realized: Dispatch,
         d_other: np.ndarray,
-        ex_ante: Dispatch | None = None,
+        b0: Dispatch | None = None,
         d_hat=None,
         own: bool = True,
         knows_share: bool = False,
     ) -> dict:
         """B = Σ_k Bᵏ, the reserve payment as a negative layer, as cvxpy expressions.
-        ``realized`` prices energy and the credit; each layer's cost comes from
-        ``ex_ante`` or ``realized`` as the form's flag says. Inside a price-taker's
-        objective both are its belief, ``d_hat`` (x̂) is required, and
+        ``realized`` is the dispatch at the bid and prices energy and the credit;
+        ``b0`` is the dispatch at (δ, 0), the source of ex-ante pools. Inside a
+        price-taker's objective both are its belief, ``d_hat`` (x̂) is required, and
         ``knows_share`` says whether it knows its own share (``Share.charge``).
         ``own=False`` bills everyone else as one load: no credit, no exemption."""
-        ex_ante = realized if ex_ante is None else ex_ante
+        b0 = realized if b0 is None else b0  # one dispatch given: the load's belief plays both roles
         if d_hat is None:
             if isinstance(d, cp.Expression):
                 raise ValueError(
@@ -171,8 +173,8 @@ class Tariff:
                 )
             d_hat = np.asarray(d, float)
         out = {}
-        for k, form, pool, price, hourly in self._layers(realized, ex_ante):
-            x, x_hat, x_other = (_base(form.hours, v, hourly) for v in (d, d_hat, d_other))
+        for k, form, pool, price in self._layers(realized, b0):
+            x, x_hat, x_other = _base(form.hours, d), form.hours * d_hat, form.hours * d_other
             out[k] = form.charge(x, x_hat, x_other, pool, price, knows_share)
         if own and self.exempt_curtailable and realized.curtailable:
             out["reserve"] = cp.Constant(0.0)
@@ -188,25 +190,27 @@ class Tariff:
         d: np.ndarray,
         realized: Dispatch,
         d_other: np.ndarray,
-        ex_ante: Dispatch | None = None,
+        b0: Dispatch | None = None,
     ) -> dict[str, np.ndarray]:
         """∂Bᵏ/∂d_t per layer at settlement, for the alignment metric."""
-        ex_ante = realized if ex_ante is None else ex_ante
+        b0 = realized if b0 is None else b0
         out = {}
-        for k, form, pool, price, hourly in self._layers(realized, ex_ante):
-            x, x_other = _base(form.hours, d, hourly), _base(form.hours, d_other, hourly)
-            out[k] = form.marginal(x, x_other, pool, price) * form.hours
+        for k, form, pool, price in self._layers(realized, b0):
+            out[k] = form.marginal(form.hours * d, form.hours * d_other, pool, price) * form.hours
         if self.exempt_curtailable and realized.curtailable:
             out["reserve"] = np.zeros_like(d)
         out["credit"] = np.zeros_like(d)
         return out
 
 
-def _base(hours: np.ndarray, d, hourly: bool):
-    """The consumption in the layer's hours: hours ∘ d for an hourly layer, hoursᵀd
-    for a one-number layer. A number for a number, an expression for a variable."""
-    if not hourly:
-        return hours @ d
+def _divide(a, b) -> np.ndarray:
+    """a / b where b > 0, else 0: the hours outside a layer's window have no base and no cost."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    return np.divide(a, b, out=np.zeros_like(b), where=b > 0)
+
+
+def _base(hours: np.ndarray, d):
+    """The consumption in the layer's hours, hours ∘ d: a number for a number, an expression for a variable."""
     return cp.multiply(hours, d) if isinstance(d, cp.Expression) else hours * d
 
 
