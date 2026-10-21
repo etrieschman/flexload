@@ -79,8 +79,17 @@ def respond(theta: LoadType, tariff: Tariff, market: Market, scenario: Scenario,
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
     b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
     if belief == "exogenous":
-        curtailed = (b0.lam >= market.voll - 1e-6) if anticipate else None
-        d_bid, sigma_bid = best_response(theta, tariff, scenario, b0, b0, d_hat=delta, curtailed=curtailed, knows_share=False)
+        d_bid, sigma_bid = best_response(
+            theta,
+            tariff,
+            scenario,
+            b0,
+            b0,
+            d_hat=delta,
+            anticipate=anticipate,
+            voll=market.voll,
+            knows_share=False,
+        )
         dispatch, believed = market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0
     elif belief == "consistent":
         _, _, dispatch, believed, _ = fixed_point(theta, tariff, market, scenario, anticipate=anticipate)
@@ -163,7 +172,17 @@ def learn(theta: LoadType, tariff: Tariff, market: Market, scenarios: list[Scena
         offer, d_firm = c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta)
         b0 = market.clear(scenario, scenario.delta, np.zeros(scenario.T), offer, d_firm)
         belief = b0 if belief is None else belief
-        d_bid, sigma_bid = best_response(theta, tariff, scenario, belief, belief, d_hat=belief.d, curtailed=None, knows_share=False)
+        d_bid, sigma_bid = best_response(
+            theta,
+            tariff,
+            scenario,
+            belief,
+            belief,
+            d_hat=belief.d,
+            anticipate=False,
+            voll=market.voll,
+            knows_share=False,
+        )
         dispatch = market.clear(scenario, d_bid, sigma_bid, offer, d_firm)
         bill = settle(tariff, scenario, dispatch, b0, own=True)
         rows.append({
