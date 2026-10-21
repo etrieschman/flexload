@@ -108,7 +108,7 @@ def named_types(T: int, business: str = "data_center") -> dict[str, LoadType]:
 
 
 # ----------------------------------------------------------------------------
-# V, c^σ, 𝒟_θ
+# V, c^σ, 𝒟_θ, S
 # ----------------------------------------------------------------------------
 def c_sigma(theta: LoadType, delta: np.ndarray) -> np.ndarray:
     """c^σ_t = 2 p ψ β δ_t, the cost of standing ready: the marginal loss at the
@@ -136,6 +136,15 @@ def feasible(theta: LoadType, delta: np.ndarray, d_bid, sigma_bid) -> list:
     if theta.sells_reserve:
         cons += [sigma_bid >= 0.0, d_bid - sigma_bid >= (1.0 - theta.beta) * delta]
     return cons
+
+
+def S(theta: LoadType, market: Market, scenario: Scenario, d, sigma, u, r, shed, y, Pi):
+    """S = V(d, σ) − C_sys + c^σᵀσ, welfare on what the load consumed and what
+    cleared. The offer cost sits in V and in C_sys, so it is added back once.
+    On numbers or variables alike; read a number with ``.value``."""
+    offer = c_sigma(theta, scenario.delta)
+    C_sys = market.C_sys(scenario, u, r, sigma, offer, shed, y, Pi)
+    return V(theta, scenario.delta, d, sigma) - C_sys + offer @ sigma
 
 
 # ----------------------------------------------------------------------------
@@ -288,16 +297,14 @@ def fixed_point(
 # ----------------------------------------------------------------------------
 def planner(
     theta: LoadType, market: Market, scenario: Scenario, solver: str = "GUROBI"
-) -> tuple[np.ndarray, np.ndarray, float]:
-    """B1: max over (d_bid, σ_bid) ∈ 𝒟_θ of V(d, σᶜˡʳ) − C_sys, the load's and the
-    operator's variables in one program. A curtailable type gives the planner the
+) -> tuple[np.ndarray, np.ndarray]:
+    """B1: max S over (d_bid, σ_bid) ∈ 𝒟_θ, the load's and the operator's
+    variables in one program. A curtailable type gives the planner the
     operator's instrument: headroom above dᶠⁱʳᵐ counts toward reserve. The planner
     consumes what it bids; curtailment below the bid is the operator's scarcity
-    action, not a scheduling device. The offer cost sits in V and in C_sys, so it
-    is added back once. The planner consumes its bid, d = d_bid. Returns
-    (d_bid, σ_bid, S^B1)."""
+    action, not a scheduling device. The planner consumes its bid, d = d_bid.
+    Returns the bid (d_bid, σ_bid); S^B1 is read from its clearing, as for R."""
     T, J, delta = scenario.T, scenario.J, scenario.delta
-    offer = c_sigma(theta, delta)
     d_bid = cp.Variable(T)
     sigma_bid = cp.Variable(T) if theta.sells_reserve else np.zeros(T)
     sigma = (
@@ -320,15 +327,11 @@ def planner(
             scenario, sigma_bid, d_firm, u, r, sigma, d_bid, y, z, shed
         ).values()
     )
-    welfare = (
-        V(theta, delta, d_bid, sigma)
-        - market.C_sys(scenario, u, r, sigma, offer, shed, y, Pi)
-        + offer @ sigma
-    )
+    welfare = S(theta, market, scenario, d_bid, sigma, u, r, shed, y, Pi)
     problem = cp.Problem(cp.Maximize(welfare), cons)
     problem.solve(solver=solver)
     if problem.status not in ("optimal", "optimal_inaccurate"):
         raise RuntimeError(f"planner failed: {problem.status}")
     if theta.sells_reserve:
         sigma_bid = np.maximum(np.asarray(sigma_bid.value), 0.0)
-    return np.asarray(d_bid.value), sigma_bid, float(problem.value)
+    return np.asarray(d_bid.value), sigma_bid

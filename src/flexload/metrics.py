@@ -13,13 +13,13 @@ from itertools import product
 import numpy as np
 import polars as pl
 
-from .load import LoadType, V, best_response, c_sigma, fixed_point, planner
+from .load import LoadType, S, best_response, c_sigma, fixed_point, planner
 from .system import Dispatch, Market, Scenario
 from .tariff import LAYERS, Tariff
 
 
 # ----------------------------------------------------------------------------
-# settlement and welfare
+# settlement
 # ----------------------------------------------------------------------------
 def settle(tariff: Tariff, scenario: Scenario, realized: Dispatch, b0: Dispatch, own: bool = True) -> dict[str, float]:
     """The bill in dollars, by layer plus the credit. ``realized`` is the
@@ -30,12 +30,6 @@ def settle(tariff: Tariff, scenario: Scenario, realized: Dispatch, b0: Dispatch,
     else:
         bill = tariff.bill(scenario.d_other, np.zeros(scenario.T), realized, realized.d, b0, own=False)
     return {k: float(v.value) for k, v in bill.items()}
-
-
-def S(theta: LoadType, market: Market, scenario: Scenario, dispatch: Dispatch) -> float:
-    """S = V − C_sys + c^σᵀσ: the offer cost sits in V and in C_sys, so it is added back once."""
-    C_sys = market.C_sys(scenario, dispatch.u, dispatch.r, dispatch.sigma, dispatch.c_sigma, dispatch.shed, dispatch.y, dispatch.Pi)
-    return float(V(theta, scenario.delta, dispatch.d, dispatch.sigma).value) - float(C_sys.value) + float(dispatch.c_sigma @ dispatch.sigma)
 
 
 # ----------------------------------------------------------------------------
@@ -111,15 +105,19 @@ def summary(
     b1: tuple | None = None,
 ) -> dict:
     """One row: welfare at B0, B1 and R, efficiency, the bill by layer, recovery,
-    fairness, and the belief's price error. ``b1`` is ``(d, σ, S^B1)`` from
-    ``planner`` if already solved."""
+    fairness, and the belief's price error. ``b1`` is the bid ``(d_bid, σ_bid)``
+    from ``planner`` if already solved. S is read from a clearing at each of
+    the three bids."""
     dispatch, b0, believed = respond(theta, tariff, market, scenario, belief)
-    d1, s1, S_B1 = planner(theta, market, scenario) if b1 is None else b1
+    d1, s1 = planner(theta, market, scenario) if b1 is None else b1
     planned = market.clear(scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta))
     bill = settle(tariff, scenario, dispatch, b0, own=True)
     rho = recovery(tariff, scenario, dispatch, b0)
     fair = fairness(tariff, scenario, dispatch, planned, b0)
-    S_R, S_B0 = S(theta, market, scenario, dispatch), S(theta, market, scenario, b0)
+    S_B0, S_R, S_B1 = (
+        float(S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.Pi).value)
+        for x in (b0, dispatch, planned)
+    )
     return {
         "tariff": tariff.name, "type": theta.name, "market": market.reserve, "belief": belief, "start": scenario.start,
         "S_B0": S_B0, "S_B1": S_B1, "S_R": S_R, "efficiency": S_B1 - S_R, "value_of_flexibility": S_B1 - S_B0,

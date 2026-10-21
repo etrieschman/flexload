@@ -38,13 +38,14 @@ nothing else. Aligned 2026-10-21. Private repo.
 | the load's objective under a belief 𝓜̃ | `payoff(theta, tariff, scenario, belief, b0, d_bid, sigma_bid, d_hat, anticipate, voll, knows_share)`; the belief is a `Dispatch`, `b0` holds the ex-ante pools under every belief; the tildes (σ̃ where μ̃ ≥ c^σ, d̃ = dᶠⁱʳᵐ where λ̃ ≥ c^VOLL if it anticipates) are built there | `load.py` |
 | R (QP) | `best_response(theta, tariff, scenario, belief, b0, d_hat, anticipate, voll, knows_share) -> (d_bid, sigma_bid)` | `load.py` |
 | consistent price-taker | `fixed_point(theta, tariff, market, scenario) -> (d, σ, dispatch, believed, history)` | `load.py` |
-| B1 | `planner(theta, market, scenario) -> (d, sigma, S_B1)` | `load.py` |
+| B1 | `planner(theta, market, scenario) -> (d_bid, sigma_bid)`; S^B1 is read from its clearing, as for R | `load.py` |
 | B0 | `market.clear(scenario, delta, zeros, c_sigma, d_firm)`; no function | — |
 | the load's belief about curtailment | set by the belief (report Table 2): the exogenous price-taker consumes its bid; the consistent one expects dᶠⁱʳᵐ where λ̃ is at VOLL (`payoff(anticipate, voll)`; `fixed_point` passes True) | `load.py` |
 | τ: a charge form per layer, marginal / split pool / two-part; slots 𝒲ᵏ (`hours`, a 0/1 vector), ex ante, credit, exempt | `Tariff(energy, reserve, investment, credit, exempt_curtailable)`; `Marginal(hours)`, `Share(hours, ex_ante)`, `TwoPart(hours, ex_ante, phi, T)`; `np.ones(T)`, `peak_hour(d_sys)` | `tariff.py` |
 | B = Σₖ Bᵏ, ∂Bᵏ/∂dₜ | `tariff.bill(d, sigma, realized, d_other, b0, d_hat, own, knows_share)`, `tariff.marginal(...)`; `realized` is the dispatch at the bid, `b0` the one at (δ, 0); every layer is hourly (the investment cost is spread over its hours); cvxpy expressions, `.value` for numbers. `marginal` holds Cᵏ fixed: exact ex ante, missing ∂Cᵏ/∂d ex post | `tariff.py` |
 | τ₀ today | `named_tariffs(scenario)` returns τ₀ only, every slot spelled out (Erich, 2026-10-21). No other tariff, no menu, no election in the code; Workshop II adds them. | `tariff.py` |
-| settlement; S; ρᵏ; Δᵏₜ; fairness; efficiency S^B1 − S^R | `settle`, `S`, `recovery`, `alignment`, `fairness`; `summary` (columns `S_B0, S_B1, S_R, efficiency, price_error`) | `metrics.py` |
+| S, one formula: the planner's objective and the outcome | `S(theta, market, scenario, d, sigma, u, r, shed, y, Pi)`, a cvxpy expression | `load.py` |
+| settlement; ρᵏ; Δᵏₜ; fairness; efficiency S^B1 − S^R | `settle`, `recovery`, `alignment`, `fairness`; `summary` (columns `S_B0, S_B1, S_R, efficiency, price_error`) | `metrics.py` |
 | R under a belief; the operator's table; max-min / expected welfare s.t. g(ρ) ≤ 0 | `respond(theta, tariff, market, scenario, belief) -> (dispatch, b0, believed)`; `summary`; `table(types, tariffs, markets, scenarios)`; `choose(table, rule, prior, g, epsilon)` | `metrics.py` |
 | the learner (fourth belief) | deleted 2026-10-21 (Erich: not thought through yet); git 0d47d74 has the last version | — |
 
@@ -78,8 +79,8 @@ inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 src/flexload/
   system.py   Scenario; scenario, windows, tighten, margin; ORDC.from_lolp; Dispatch; Market (ordc_for, C_sys, constraints, clear, marginal_cost); C_inv
   tariff.py   peak_hour; Marginal, Share, TwoPart; Tariff (bill, marginal); total; named_tariffs (τ₀)
-  load.py     LoadType; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; payoff; best_response; fixed_point; planner
-  metrics.py  settle; S; recovery; alignment; fairness; respond; summary; table; choose
+  load.py     LoadType; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; S; payoff; best_response; fixed_point; planner
+  metrics.py  settle; recovery; alignment; fairness; respond; summary; table; choose
 notebooks/walkthrough.py   jupytext cells; the documentation
 tests/        conftest (3-generator, 4-hour scenario); test_system, test_tariff, test_load
 docs/         assumptions.md (every non-report choice, one line each); catalog/large_load_arrangements.md (designations), catalog/bill_decomposition.md (every ERCOT charge)

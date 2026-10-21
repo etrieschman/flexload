@@ -10,11 +10,11 @@
     d, sigma = best_response(theta, tau, scenario, b0, b0, d_hat=scenario.delta, anticipate=False, voll=market.voll, knows_share=False)   # R
     dispatch = market.clear(scenario, d, sigma, c_sigma(theta, scenario.delta))
     bill     = settle(tau, scenario, dispatch, b0)
-    d1, s1, S_B1 = planner(theta, market, scenario)                                       # B1
+    d1, s1 = planner(theta, market, scenario)                                             # B1
 """
 
-from .load import BETA, BUSINESS, P, PSI, LoadType, V, best_response, c_sigma, feasible, fixed_point, named_types, payoff, planner
-from .metrics import S, alignment, choose, fairness, recovery, respond, settle, summary, table
+from .load import BETA, BUSINESS, P, PSI, LoadType, S, V, best_response, c_sigma, feasible, fixed_point, named_types, payoff, planner
+from .metrics import alignment, choose, fairness, recovery, respond, settle, summary, table
 from .system import C_inv, Dispatch, ORDC, Market, Scenario, margin, scenario, tighten, windows
 from .tariff import Marginal, Share, Tariff, TwoPart, named_tariffs, peak_hour, total
 

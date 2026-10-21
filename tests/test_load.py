@@ -4,8 +4,8 @@ from dataclasses import replace
 
 import numpy as np
 
-from flexload.load import LoadType, best_response, c_sigma, fixed_point, named_types, planner
-from flexload.metrics import S, choose, recovery, respond, summary, table
+from flexload.load import LoadType, S, best_response, c_sigma, fixed_point, named_types, planner
+from flexload.metrics import choose, recovery, respond, summary, table
 from flexload.system import Dispatch, Market
 from flexload.tariff import Marginal, Share, Tariff, named_tariffs, peak_hour
 
@@ -16,6 +16,11 @@ def belief(lam, mu, delta) -> Dispatch:
     z = np.zeros(T)
     return Dispatch(d=delta, sigma=z, u=np.zeros((1, T)), r=np.zeros((1, T)), shed=z, lam=lam, mu=mu, nu=np.zeros((1, T)), eta=z, Pi=z,
                     C_energy=z, C_res=z, C_inv=0.0, d_bid=delta, sigma_bid=z, d_firm=delta, c_sigma=z, y=np.ones(1))
+
+
+def welfare(theta, market, scenario, x) -> float:
+    """S read off a dispatch."""
+    return float(S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.Pi).value)
 
 
 def energy_only(T) -> Tariff:
@@ -74,12 +79,12 @@ def test_welfare_ordering_B0_R_B1(pjm, small):
     tau = named_tariffs(small)["tau_0"]
     for name in ("mover", "controllable", "inflexible", "curtailable"):
         theta = named_types(small.T)[name]
-        d1, s1, S_star = planner(theta, pjm, small)
+        d1, s1 = planner(theta, pjm, small)
         b1 = pjm.clear(small, d1, s1, c_sigma(theta, small.delta), theta.d_firm(small.delta))
         dispatch, b0, _ = respond(theta, tau, pjm, small)
-        assert S_star >= S(theta, pjm, small, dispatch) - 1e-4, name
-        assert S_star >= S(theta, pjm, small, b0) - 1e-4, name
-        assert np.isclose(S_star, S(theta, pjm, small, b1), rtol=1e-4), name  # B1 re-cleared reproduces S*
+        S_B1, S_R, S_B0 = (welfare(theta, pjm, small, x) for x in (b1, dispatch, b0))
+        assert S_B1 >= S_R - 1e-4, name
+        assert S_B1 >= S_B0 - 1e-4, name
 
 
 def test_fixed_point_converges_within_one_merit_order_step(pjm, small):
@@ -125,8 +130,11 @@ def test_table_and_choice(small):
 def test_curtailable_planner_is_not_hurt_by_the_instrument(pjm, small):
     tight = replace(small, d_other=small.d_other + np.array([0.0, 0.0, 60.0, 0.0]))
     types = named_types(tight.T)
-    S_curtailable = planner(types["curtailable"], pjm, tight)[2]
-    S_mover = planner(types["mover"], pjm, tight)[2]
-    assert S_curtailable >= S_mover - 1e-4
+    cleared = {}
+    for name in ("curtailable", "mover"):
+        theta = types[name]
+        d1, s1 = planner(theta, pjm, tight)
+        cleared[name] = welfare(theta, pjm, tight, pjm.clear(tight, d1, s1, c_sigma(theta, tight.delta), theta.d_firm(tight.delta)))
+    assert cleared["curtailable"] >= cleared["mover"] - 1e-4
     dispatch, _, _ = respond(types["curtailable"], named_tariffs(tight)["tau_0"], pjm, tight)
-    assert S_curtailable >= S(types["curtailable"], pjm, tight, dispatch) - 1e-4
+    assert cleared["curtailable"] >= welfare(types["curtailable"], pjm, tight, dispatch) - 1e-4
