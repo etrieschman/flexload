@@ -14,7 +14,7 @@ def belief(lam, mu, delta) -> Dispatch:
     """A price-taker's belief with empty pools, so the bill is λᵀd − μᵀσ."""
     T = lam.shape[0]
     z = np.zeros(T)
-    return Dispatch(d=delta, sigma=z, u=np.zeros((1, T)), r=np.zeros((1, T)), shed=z, lam=lam, mu=mu, nu=np.zeros((1, T)), eta=z,
+    return Dispatch(d=delta, sigma=z, u=np.zeros((1, T)), r=np.zeros((1, T)), shed=z, lam=lam, mu=mu, nu=np.zeros((1, T)), eta=z, Pi=z,
                     C_energy=z, C_res=z, C_inv=0.0, d_bid=delta, sigma_bid=z, d_firm=delta, c_sigma=z, y=np.ones(1))
 
 
@@ -113,7 +113,7 @@ def test_menu_election_and_summary(pjm, small):
 
 
 def test_table_and_choice(small):
-    market = Market(reserve="ercot", gamma=0.0, missing_money=520_000.0)
+    market = Market(reserve="ercot", gamma=0.0, C_inv=520_000.0)
     tariffs = {k: v for k, v in named_tariffs(small).items() if k in ("tau_0", "tau_2", "tau_4")}
     types = {k: v for k, v in named_types(small.T).items() if k in ("mover", "controllable")}
     t = table(types, tariffs, [market], [small])

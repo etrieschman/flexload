@@ -19,7 +19,7 @@ import flexload as fl
 weeks = fl.windows(T=168, alpha=0.05, reserve_margin=0.10)  # ω and δ from RTS-GMLC: the year in operating windows
 scenario = weeks[31]
 market = fl.Market(reserve="ercot")                          # or "pjm"
-market = replace(market, missing_money=fl.missing_money(market, weeks))  # annual Ĉⁱⁿᵛ, cached
+market = replace(market, C_inv=fl.C_inv(market, weeks))                 # annual cost of the investment layer, cached
 tau = fl.named_tariffs(scenario)["tau_0"]                    # today's tariff
 theta = fl.named_types(scenario.T, "data_center")["mover"]  # θ₁ as a data center
 

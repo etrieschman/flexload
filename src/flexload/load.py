@@ -174,7 +174,7 @@ def fixed_point(theta: LoadType, tariff: Tariff, market: Market, scenario: Scena
     belief = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
     d_prev, sigma_prev, history = delta.copy(), np.zeros(T), []
     for k in range(max_iter):
-        curtailed = (market.kappa(belief) >= market.voll) if anticipate else None
+        curtailed = (belief.lam >= market.voll - 1e-6) if anticipate else None  # shortage hours: λ̃ at VOLL
         d, sigma = best_response(theta, tariff, scenario, belief, d_prev, curtailed)
         step = damping if damping is not None else 1.0 / (k + 1)
         d, sigma = step * d + (1 - step) * d_prev, step * sigma + (1 - step) * sigma_prev
@@ -190,7 +190,7 @@ def fixed_point(theta: LoadType, tariff: Tariff, market: Market, scenario: Scena
 # B1
 # ----------------------------------------------------------------------------
 def planner(theta: LoadType, market: Market, scenario: Scenario, solver: str = "GUROBI") -> tuple[np.ndarray, np.ndarray, float]:
-    """max_{(d, σ) ∈ 𝒟_θ} V(d, σᶜˡʳ) − C_sys, the load's and the operator's
+    """B1: max_{(d, σ) ∈ 𝒟_θ} V(d, σᶜˡʳ) − C_sys, the load's and the operator's
     variables in one program. A curtailable type gives the planner the same
     instrument the operator has: its headroom d − (1 − β) δ counts toward
     reserve. The planner consumes what it bids; curtailment below the bid is the
@@ -203,11 +203,14 @@ def planner(theta: LoadType, market: Market, scenario: Scenario, solver: str = "
     sigma_clr = cp.Variable(T, nonneg=True) if theta.offers else np.zeros(T)
     u, r, shed = cp.Variable((J, T), nonneg=True), cp.Variable((J, T), nonneg=True), cp.Variable(T, nonneg=True)
     y = cp.Variable(J, nonneg=True) if market.long_run else scenario.nameplate
-    z = cp.Variable((market.curve(scenario).widths.size, T), nonneg=True) if market.reserve == "ercot" else None
     d_firm = theta.d_firm(delta) if theta.curtailable else d
+    if market.reserve == "ercot":
+        z = cp.Variable((market.curve(scenario).widths.size, T), nonneg=True)
+        Pi = market.curve(scenario).prices @ z
+    else:
+        z, Pi = None, np.zeros(T)
     cons = feasible(theta, delta, d, sigma) + list(market.constraints(scenario, sigma, d_firm, u, r, sigma_clr, d, y, z, shed).values())
-    cost = market.system_cost(scenario, u, r, sigma_clr, offer, y, z, shed)
-    welfare = V(theta, delta, d, sigma_clr) - cost + offer @ sigma_clr
+    welfare = V(theta, delta, d, sigma_clr) - market.C_sys(scenario, u, r, sigma_clr, offer, shed, y, Pi) + offer @ sigma_clr
     problem = cp.Problem(cp.Maximize(welfare), cons)
     problem.solve(solver=solver)
     if problem.status not in ("optimal", "optimal_inaccurate"):

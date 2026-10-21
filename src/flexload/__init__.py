@@ -2,7 +2,7 @@
 
     weeks    = windows(T=168, alpha=0.05, reserve_margin=0.10)   # ω and δ: the year in operating windows
     market   = Market(reserve="ercot")                           # the environment
-    market   = replace(market, missing_money=missing_money(market, weeks))
+    market   = replace(market, C_inv=C_inv(market, weeks))                      # annual cost of the investment layer
     scenario = weeks[31]
     tau      = named_tariffs(scenario)["tau_0"]                  # τ, today's tariff
     theta    = named_types(scenario.T, "data_center")["mover"]   # θ
@@ -15,12 +15,12 @@
 
 from .load import BETA, BUSINESS, P, PSI, LoadType, V, best_response, blocks, c_sigma, elect, feasible, fixed_point, named_types, payoff, planner
 from .metrics import S, alignment, choose, fairness, learn, recovery, respond, settle, summary, table
-from .system import DemandCurve, Dispatch, Market, Scenario, margin, missing_money, scenario, tighten, windows
+from .system import C_inv, DemandCurve, Dispatch, Market, Scenario, margin, scenario, tighten, windows
 from .tariff import Menu, Share, Tariff, TwoPart, all_hours, named_tariffs, peak_hour, share, total, two_part
 
 __all__ = [
-    "BETA", "BUSINESS", "DemandCurve", "Dispatch", "LoadType", "Market", "Menu", "P", "PSI", "S", "Scenario", "Share", "Tariff",
+    "BETA", "BUSINESS", "C_inv", "DemandCurve", "Dispatch", "LoadType", "Market", "Menu", "P", "PSI", "S", "Scenario", "Share", "Tariff",
     "TwoPart", "V", "alignment", "all_hours", "best_response", "blocks", "c_sigma", "choose", "elect", "fairness", "feasible",
-    "fixed_point", "learn", "margin", "missing_money", "named_tariffs", "named_types", "payoff", "peak_hour", "planner",
+    "fixed_point", "learn", "margin", "named_tariffs", "named_types", "payoff", "peak_hour", "planner",
     "recovery", "respond", "scenario", "settle", "share", "summary", "table", "tighten", "total", "two_part", "windows",
 ]

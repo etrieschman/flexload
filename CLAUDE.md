@@ -26,12 +26,12 @@ nothing else. Aligned 2026-10-21. Private repo.
 |---|---|---|
 | ω = (d°, cᵘ, cʳ, cⁱⁿᵛ, ū), δ = α × system load | `Scenario(delta, d_other, cost_gen, cost_res, cost_inv, capacity, nameplate, unit, names, start)` | `system.py` |
 | operating window 𝒯, the year, α, tightness | `scenario(start, T, alpha, reserve_margin)`; `windows(T, alpha, reserve_margin)` (the year, one tightness scale); `tighten`; `margin` | `system.py` |
-| PJM / ERCOT, γ, cⱽᴼᴸᴸ, Cⁱⁿᵛ | `Market(reserve, gamma, voll, long_run, ordc, missing_money, solver)` | `system.py` |
-| ORDC steps (w_s, π_s); fit to π(z) = VOLL·Pr[ε > z − R̲] | `DemandCurve(widths, prices)`; `DemandCurve.from_lolp(voll, min_contingency, sigma, steps)`; `.default` is the placeholder | `system.py` |
-| dispatch 𝓜_ω(d, σ) | `market.clear(scenario, d, sigma, c_sigma, d_firm) -> Dispatch` | `system.py` |
-| (u, r, σᶜˡʳ, dᶜᵘʳᵗ, s), (λ, μ, ν), Cᵏ | `Dispatch(d, sigma, u, r, shed, lam, mu, nu, eta, C_energy, C_res, C_inv, ...)`; the cost of each layer rides on the dispatch | `system.py` |
-| Cⁱⁿᵛ := (T/8760) Σⱼ(cⁱⁿᵛⱼ − Σ_year νⱼₜ)ūⱼ | `missing_money(market, windows)`, annual; `clear` prorates | `system.py` |
-| C_sys, κₜ, ∂C_sys/∂dₜ by layer | `market.C_sys`, `market.kappa`, `market.marginal_cost` | `system.py` |
+| PJM / ERCOT, γ, cⱽᴼᴸᴸ, Cⁱⁿᵛ (annual) | `Market(reserve, gamma, voll, long_run, ordc, C_inv, solver)` | `system.py` |
+| ORDC steps (w_s, π_s), π(z) = VOLL·Pr[ε > z − R̲]; ε from day-ahead vs real-time net load by month | `DemandCurve.from_lolp(voll, min_contingency, forecast_error, steps)`; `Scenario.forecast_error`; `market.curve(scenario)` with R̲ = the largest unit | `system.py` |
+| dispatch 𝓜_ω(d, σ) | `market.clear(scenario, d_bid, sigma_bid, c_sigma, d_firm) -> Dispatch` | `system.py` |
+| (u, r, σᶜˡʳ, dᶜᵘʳᵗ, s), (λ, μ, ν), Π_t, Cᵏ | `Dispatch(d, sigma, u, r, shed, lam, mu, nu, eta, Pi, C_energy, C_res, C_inv, d_bid, sigma_bid, ...)`: `d, sigma` are what cleared, `d_bid, sigma_bid` what the load offered | `system.py` |
+| Cⁱⁿᵛ := (T/8760) Σⱼ(cⁱⁿᵛⱼ − Σ_year νⱼₜ)ūⱼ | `C_inv(market, windows)`, annual; `clear` prorates. Not "missing money": that needs a price cap, which there is none of yet | `system.py` |
+| C_sys (the one cost formula: dispatch objective, planner, S), ∂C_sys/∂dₜ by layer | `market.C_sys(scenario, u, r, sigma, c_sigma, shed, y, Pi)`; `market.marginal_cost(dispatch)` | `system.py` |
 | θ = (ψ, β, A, p, 𝕀{sells reserve}, 𝕀{curtailable}); dᶠⁱʳᵐ = (1−β) minₜ δₜ | `LoadType(psi, beta, A, p, sells_reserve, curtailable)`; `theta.d_firm(delta)` (a level; None if not curtailable) | `load.py` |
 | blocks of hours in A; θ₀…θ₄ as a data center or a bitcoin mine | `blocks(T, hours)`; `named_types(T, business)` with `PSI`, `BETA`, `P`, `BUSINESS` | `load.py` |
 | c^σₜ = 2pψβδₜ; V(d, σ); 𝒟_θ | `c_sigma`, `V`, `feasible` | `load.py` |
@@ -40,6 +40,7 @@ nothing else. Aligned 2026-10-21. Private repo.
 | consistent price-taker | `fixed_point(theta, tariff, market, scenario) -> (d, σ, dispatch, believed, history)` | `load.py` |
 | B1 | `planner(theta, market, scenario) -> (d, sigma, S_B1)` | `load.py` |
 | B0 | `market.clear(scenario, delta, zeros, c_sigma, d_firm)`; no function | — |
+| the load's belief about curtailment | hours where the believed λ is at VOLL (`anticipate=True` in `respond`, `fixed_point`) | `load.py`, `metrics.py` |
 | τ: marginal (energy, fixed) / split pool / two-part; slots 𝒲ᵏ, ex ante, credit, exempt | `Tariff(reserve, investment, credit, exempt_curtailable)`; `share(w, ex_ante)`, `two_part(w, ex_ante, phi, T)`; `all_hours(T)`, `peak_hour(d_sys)` | `tariff.py` |
 | B = Σₖ Bᵏ, ∂Bᵏ/∂dₜ | `tariff.bill(d, sigma, realized, d_other, ex_ante, d_hat, own)`, `tariff.marginal(...)`; cvxpy expressions, `.value` for numbers | `tariff.py` |
 | τ₀ today; τ₁…τ₅ for Workshop II (τ₅ = exemption menu) | `named_tariffs(scenario)`; `Menu(options)` | `tariff.py` |
@@ -75,7 +76,7 @@ inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 
 ```
 src/flexload/
-  system.py   Scenario; scenario, windows, tighten, margin; DemandCurve (default, from_lolp); Dispatch; Market (system_cost, constraints, clear, C_sys, kappa, marginal_cost); missing_money
+  system.py   Scenario; scenario, windows, tighten, margin; DemandCurve.from_lolp; Dispatch; Market (curve, C_sys, constraints, clear, marginal_cost); C_inv
   tariff.py   all_hours, peak_hour; Share, TwoPart (+ share, two_part); Tariff (bill, marginal); Menu; total; named_tariffs
   load.py     LoadType; blocks; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; payoff; best_response; elect; fixed_point; planner
   metrics.py  settle; S; recovery; alignment; fairness; respond; summary; table; choose; learn
@@ -91,7 +92,9 @@ Imports run one way: system ← tariff ← load ← metrics.
 - 35 tests pass. Refactored 2026-10-19 (four files, one number system, the bill reads a
   dispatch, curtailment is a type, window not week, Gurobi) and aligned to the report
   2026-10-21 (firm level, named types by business, c^σ, C_energy, credit slot, τ₅,
-  welfare rules, efficiency and price_error columns, DemandCurve.from_lolp).
+  welfare rules, efficiency and price_error columns). Erich's system.py review
+  2026-10-21: one cost formula `C_sys`, Π on the dispatch, bid/outcome names, `C_inv`
+  not missing money, ORDC fit from the data's forecast error, κ and single-use helpers gone.
   With Gurobi: clearing ≈ 1.3 s, planner ≈ 2–3 s.
 - Built: both reserve constructs, short and long run, the curtailable type and the
   exemption menu (τ₅), the three charge forms, ex-ante and ex-post costs, the

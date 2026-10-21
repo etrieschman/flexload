@@ -8,7 +8,7 @@ import pytest
 
 from flexload.system import Market, Scenario
 
-MISSING_MONEY = 520_000.0  # annual $, arbitrary
+C_INV = 520_000.0  # annual cost of the investment layer, $, arbitrary
 
 
 @pytest.fixture
@@ -25,14 +25,15 @@ def small() -> Scenario:
         nameplate=nameplate,
         unit=np.array([0, 1, 2]),
         names=("base", "mid", "peaker"),
+        forecast_error=10.0,  # MW; sets the ERCOT curve
     )
 
 
 @pytest.fixture(params=["pjm", "ercot"])
 def market(request) -> Market:
-    return Market(reserve=request.param, gamma=0.0, voll=5000.0, missing_money=MISSING_MONEY)
+    return Market(reserve=request.param, gamma=0.0, voll=5000.0, C_inv=C_INV)
 
 
 @pytest.fixture
 def pjm() -> Market:
-    return Market(reserve="pjm", gamma=0.0, voll=5000.0, missing_money=MISSING_MONEY)
+    return Market(reserve="pjm", gamma=0.0, voll=5000.0, C_inv=C_INV)

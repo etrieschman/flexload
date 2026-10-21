@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from flexload.system import HOURS_PER_YEAR, DemandCurve, Market, margin, missing_money, tighten
+from flexload.system import HOURS_PER_YEAR, C_inv, DemandCurve, Market, margin, tighten
 
 
 def b0(market, small, d_firm=None):
@@ -37,25 +37,25 @@ def test_pjm_reserve_covers_largest_unit(pjm, small):
 
 def test_ercot_demand_curve_price_reads_off_curve(small):
     curve = DemandCurve(widths=np.array([10.0, 10.0, np.inf]), prices=np.array([100.0, 40.0, 0.0]))
-    market = Market(reserve="ercot", gamma=0.0, ordc=curve, missing_money=0.0)
+    market = Market(reserve="ercot", gamma=0.0, ordc=curve, C_inv=0.0)
     dp = b0(market, small)
     # reserve is free (no reserve cost, slack capacity): the LP fills the curve until the price is zero
     assert np.allclose(dp.mu, 0.0, atol=1e-6)
-    assert np.isclose(dp.reserve_value, small.T * (1000.0 + 400.0), rtol=1e-6)
+    assert np.isclose(dp.Pi.sum(), small.T * (1000.0 + 400.0), rtol=1e-6)
 
 
 def test_C_sys_is_generation_cost_when_reserve_free(pjm, small):
     dp = b0(pjm, small)
-    assert np.isclose(pjm.C_sys(dp, small), float((small.cost_gen[:, None] * dp.u).sum()), rtol=1e-6)
+    assert np.isclose(float(pjm.C_sys(small, dp.u, dp.r, dp.sigma, dp.c_sigma, dp.shed, dp.y, dp.Pi).value), float((small.cost_gen[:, None] * dp.u).sum()), rtol=1e-6)
 
 
 def test_pools_on_the_dispatch(market, small):
     dp = b0(market, small)
     assert np.allclose(dp.C_res, dp.mu * (dp.r.sum(axis=0) + dp.sigma))
-    assert np.isclose(dp.C_inv, market.missing_money * small.T / HOURS_PER_YEAR)
+    assert np.isclose(dp.C_inv, market.C_inv * small.T / HOURS_PER_YEAR)
 
 
-def test_short_run_needs_missing_money(small):
+def test_short_run_needs_C_inv(small):
     with pytest.raises(ValueError):
         b0(Market(reserve="pjm", gamma=0.0), small)
 
@@ -88,13 +88,13 @@ def test_other_load_sheds_at_voll_when_short(pjm, small):
     dp = b0(pjm, tight)
     assert dp.shed[2] > 0.0 and np.allclose(dp.shed[[0, 1, 3]], 0.0, atol=1e-6)
     assert np.isclose(dp.lam[2], 5000.0, rtol=1e-6)
-    assert np.isclose(pjm.C_sys(dp, tight), float((tight.cost_gen[:, None] * dp.u).sum()) + 5000.0 * dp.shed.sum(), rtol=1e-6)
+    assert np.isclose(float(pjm.C_sys(tight, dp.u, dp.r, dp.sigma, dp.c_sigma, dp.shed, dp.y, dp.Pi).value), float((tight.cost_gen[:, None] * dp.u).sum()) + 5000.0 * dp.shed.sum(), rtol=1e-6)
 
 
-def test_missing_money_is_annual_cost_less_rents(pjm, small):
-    annual = missing_money(pjm, [small] * 3, cache=False)
+def test_C_inv_is_annual_cost_less_rents(pjm, small):
+    annual = C_inv(pjm, [small] * 3, cache=False)
     dp = b0(pjm, small)
-    per_window = float(np.sum((small.cost_inv_window - dp.nu.sum(axis=1)) * small.nameplate))
+    per_window = float(np.sum((small.cost_inv * small.T / HOURS_PER_YEAR - dp.nu.sum(axis=1)) * small.nameplate))
     assert np.isclose(annual, 3 * per_window)
 
 

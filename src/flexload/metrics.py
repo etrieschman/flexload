@@ -33,7 +33,9 @@ def settle(tariff: Tariff, scenario: Scenario, realized: Dispatch, ex_ante: Disp
 
 def S(theta: LoadType, market: Market, scenario: Scenario, dispatch: Dispatch) -> float:
     """S = V − C_sys + c^σᵀσᶜˡʳ: the offer cost sits in V and in C_sys, so it is added back once."""
-    return float(V(theta, scenario.delta, dispatch.d, dispatch.sigma).value) - market.C_sys(dispatch, scenario) + float(dispatch.c_sigma @ dispatch.sigma)
+    dp = dispatch
+    C_sys = market.C_sys(scenario, dp.u, dp.r, dp.sigma, dp.c_sigma, dp.shed, dp.y, dp.Pi)
+    return float(V(theta, scenario.delta, dp.d, dp.sigma).value) - float(C_sys.value) + float(dp.c_sigma @ dp.sigma)
 
 
 # ----------------------------------------------------------------------------
@@ -72,7 +74,7 @@ def respond(theta: LoadType, tariff: Tariff | Menu, market: Market, scenario: Sc
     delta, T = scenario.delta, scenario.T
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
     ex_ante = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
-    curtailed = (market.kappa(ex_ante) >= market.voll) if anticipate else None
+    curtailed = (ex_ante.lam >= market.voll - 1e-6) if anticipate else None  # shortage hours: λ̃ at VOLL
     tau = elect(theta, tariff, scenario, ex_ante, curtailed=curtailed) if isinstance(tariff, Menu) else tariff
     if belief == "exogenous":
         d, sigma = best_response(theta, tau, scenario, ex_ante, curtailed=curtailed)
@@ -164,7 +166,7 @@ def learn(theta: LoadType, tariff: Tariff, market: Market, scenarios: list[Scena
         })
         dispatches.append(dispatch)
         belief = replace(belief, lam=(1 - eta) * belief.lam + eta * dispatch.lam, mu=(1 - eta) * belief.mu + eta * dispatch.mu,
-                         C_energy=(1 - eta) * belief.C_energy + eta * dispatch.C_energy,
+                         Pi=(1 - eta) * belief.Pi + eta * dispatch.Pi, C_energy=(1 - eta) * belief.C_energy + eta * dispatch.C_energy,
                          C_res=(1 - eta) * belief.C_res + eta * dispatch.C_res, C_inv=(1 - eta) * belief.C_inv + eta * dispatch.C_inv,
                          d=(1 - eta) * belief.d + eta * dispatch.d)
     return pl.DataFrame(rows), dispatches
