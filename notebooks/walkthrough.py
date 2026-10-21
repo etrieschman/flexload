@@ -1,201 +1,165 @@
 # %% [markdown]
 # # flexload walkthrough
 #
-# The memo, one call at a time, on one week of RTS-GMLC. Run as a script
-# (`uv run python notebooks/walkthrough.py`) or cell by cell in the `flexload (uv)` kernel.
+# One window of the game, step by step (report §5, Table "code"). Run as a
+# script, `uv run python notebooks/walkthrough.py`, or cell by cell in the
+# `flexload (uv)` kernel. Every setting is in the next cell.
 
+# %%
 import time
 from dataclasses import replace
 
 import numpy as np
 import polars as pl
-
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from pathlib import Path
+import rts_gmlc as rts
 
 import flexload as fl
-
 
 pl.Config.set_tbl_rows(30)
 pl.Config.set_tbl_width_chars(160)
 np.set_printoptions(precision=1, suppress=True, linewidth=140)
 
 # %% [markdown]
-# ## ω and δ: the year in operating windows of one week
-#
-# `alpha` sets the load's size: δ is that share of system load, hour by hour,
-# carved out of the RTS total. `reserve_margin` scales both loads by one factor
-# for the whole year so the annual tightest hour has 15% spare capacity; without
-# it RTS-GMLC is slack (34%) and nothing ever binds. 15% is where ERCOT's
-# energy-only prices pay the fleet's annual investment cost, so its investment
-# layer is empty and PJM's holds the missing money. Week 31 is early August, in
-# the run of scarcity weeks (28–35); the tightest hour is in week 32, the peak
-# load in 34.
+# ## Settings
 
-weeks = fl.windows(T=24 * 7, alpha=0.05, reserve_margin=0.15)
-scenario = weeks[31]
-print(
-    f"T={scenario.T} hours, J={scenario.J} offer blocks on {scenario.units.shape[0]} units"
-)
-print(
-    f"peak system load {scenario.d_sys.max():,.0f} MW, flexible load delta {scenario.delta.min():,.0f}-{scenario.delta.max():,.0f} MW"
-)
-print(
-    f"this week's tightest-hour margin {fl.margin(scenario):.3f}, ex-ante peak hour {scenario.peak}"
-)
+# %%
+T = 168  # hours per operating window: one week
+WEEK = 31  # the window shown: early August, in the scarcity weeks 28-35
+ALPHA = 0.05  # the load's size, its share of system load
+RESERVE_MARGIN = 0.15  # spare capacity at the year's tightest hour (the default)
+RESERVE = "ercot"  # "ercot" (demand curve) or "pjm" (hard requirement)
+BUSINESS = "data_center"  # or "bitcoin_mine": sets (psi, beta, A) of the swept types
+TYPE = "mover"  # inflexible, mover, controllable, emergency, curtailable
+LEARN_WEEKS = slice(28, 36)  # windows the learner plays, in order
+ETA = 0.5  # the learner's weight on the latest window
+print(f"RTS-GMLC data: {rts.data_root()} at ref {rts.REF[:8]}")
 
 # %% [markdown]
-# ## The environment, the operator's action, the load's type
+# ## 1. Fix the market and window; set the tariff
 #
-# The cost of the investment layer Cⁱⁿᵛ is annual: investment cost less the rents
-# capacity earns on the B0 path over the year, prorated to the window. It takes
-# 52 clearings and is cached. Under ERCOT the reserve demand curve is fit to the
-# data's net-load forecast error, with R̲ at the largest unit.
-market = fl.Market(reserve="ercot")  # or "pjm"; gamma, voll, long_run are fields
+# `windows` cuts the year into windows under one tightness scale. `C_inv` is the
+# annual cost of the investment layer, from a B0 run over the year (cached).
+
+# %%
+t0 = time.time()
+weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN)
+scenario = weeks[WEEK]
+market = fl.Market(reserve=RESERVE)
 market = replace(market, C_inv=fl.C_inv(market, weeks))
-print(
-    f"annual investment-layer cost {market.C_inv / 1e6:,.1f} M$; this window's share {market.C_inv * 168 / 8760 / 1e6:,.2f} M$"
-)
-curve = market.ordc_for(scenario)
-print(
-    f"forecast error σ_ε {scenario.epsilon_std:,.0f} MW; ORDC steps (MW wide, $/MWh): {list(zip(np.round(curve.widths).tolist(), np.round(curve.prices).tolist()))[:4]} ..."
-)
-tau = fl.named_tariffs(scenario)["tau_0"]  # today's tariff
-theta = fl.named_types(scenario.T, "data_center")["mover"]  # θ₁ as a data center
-offer = fl.c_sigma(theta, scenario.delta)  # the mover sells no reserve, so this is zero
-print(
-    f"tau_0: reserve {type(tau.reserve).__name__} every hour, investment {type(tau.investment).__name__} on the peak hour t* = {scenario.peak}"
-)
+tau = fl.named_tariffs(scenario)["tau_0"]
+theta = fl.named_types(T, BUSINESS)[TYPE]
+offer = fl.c_sigma(theta, scenario.delta)
+d_firm = theta.d_firm(scenario.delta)
+print(f"set up in {time.time() - t0:.0f}s")
+print(f"T={scenario.T}, J={scenario.J} offer blocks, {scenario.units.shape[0]} units")
+print(f"peak load {scenario.d_sys.max():,.0f} MW")
+print(f"delta {scenario.delta.min():,.0f}-{scenario.delta.max():,.0f} MW")
+print(f"window margin {fl.margin(scenario):.3f}; peak hour t* = {scenario.peak}")
+print(f"annual C_inv {market.C_inv / 1e6:,.1f} M$")
+print(f"window share of C_inv {market.C_inv * T / 8760 / 1e6:,.2f} M$")
+ordc = market.ordc_for(scenario)
+steps = list(zip(ordc.widths.round().tolist(), ordc.prices.round().tolist()))
+print(f"sigma_eps {scenario.epsilon_std:,.0f} MW")
+print(f"ORDC steps (MW, $/MWh): {steps[:4]} ...")
 
 # %% [markdown]
-# ## B0: the inflexible path, and what it clears
-#
-# `clear` is 𝓜_ω(d, σ). The dispatch carries λ, μ and the cost of each layer.
+# ## 2. Inputs for the load's belief: dispatch at the preferred profile (B0)
+
+# %%
 t0 = time.time()
-b0 = market.clear(
-    scenario, scenario.delta, np.zeros(scenario.T), offer, theta.d_firm(scenario.delta)
-)
-print(
-    f"cleared in {time.time() - t0:.1f}s: lambda mean {b0.lam.mean():.1f}, max {b0.lam.max():.1f}; mu > 0 in {(b0.mu > 1e-6).sum()} hours"
-)
-print(
-    f"cost of each layer over the week: energy {b0.C_energy.sum():,.0f} $, reserve {b0.C_res.sum():,.0f} $, investment {b0.C_inv:,.0f} $"
-)
+b0 = market.clear(scenario, scenario.delta, np.zeros(T), offer, d_firm)
+print(f"cleared in {time.time() - t0:.1f}s")
+print(f"lambda mean {b0.lam.mean():.1f}, max {b0.lam.max():.1f}")
+print(f"mu > 0 in {(b0.mu > 1e-6).sum()} hours")
+print(f"energy cost {b0.C_energy.sum():,.0f} $")
+print(f"reserve cost {b0.C_res.sum():,.0f} $")
+print(f"investment cost {b0.C_inv:,.0f} $")
 
 # %% [markdown]
-# ## R: the exogenous price-taker's best response
-#
-# A QP in (d, σ). The belief is the B0 dispatch: prices, layer costs and the rate at δ are taken as given.
-d, sigma = fl.best_response(theta, tau, scenario, belief=b0, b0=b0, d_hat=scenario.delta, curtailed=None, knows_share=False)
-dispatch = market.clear(scenario, d, sigma, offer, theta.d_firm(scenario.delta))
-print(
-    f"energy shifted {np.abs(d - scenario.delta).sum():,.0f} MWh over the week; energy conserved: {np.isclose(d.sum(), scenario.delta.sum())}"
-)
-print("hours the load moved most:", np.argsort(-np.abs(d - scenario.delta))[:8])
+# ## 3. The load bids (exogenous price-taker: posted rates at the B0 prices)
+
+# %%
+d_bid, sigma_bid = fl.best_response(theta, tau, scenario, belief=b0, b0=b0)
+print(f"energy shifted {np.abs(d_bid - scenario.delta).sum():,.0f} MWh")
+print("hours moved most:", np.argsort(-np.abs(d_bid - scenario.delta))[:8])
 
 # %% [markdown]
-# ## The bill, by layer, at settlement
-#
-# Each cost-share layer's cost comes from the dispatch its `ex_ante` flag names.
-bill_b0, bill_r = (
-    fl.settle(tau, scenario, b0, b0),
-    fl.settle(tau, scenario, dispatch, b0),
-)
-print(
-    pl.DataFrame(
-        {
-            "layer": list(bill_b0),
-            "B0": list(bill_b0.values()),
-            "R": list(bill_r.values()),
-        }
-    )
-)
+# ## 4. Dispatch clears
+
+# %%
+dispatch = market.clear(scenario, d_bid, sigma_bid, offer, d_firm)
+print(f"served {dispatch.d.sum():,.0f} of {d_bid.sum():,.0f} MWh bid")
+print(f"price error {np.abs(b0.lam - dispatch.lam).mean():.1f} $/MWh")
 
 # %% [markdown]
-# ## B1: the planner, and the outcomes
-t0 = time.time()
-d1, s1, S_B1 = fl.planner(theta, market, scenario)
-b1 = market.clear(scenario, d1, s1, offer, theta.d_firm(scenario.delta))
-print(f"planner in {time.time() - t0:.1f}s")
-row = fl.summary(theta, tau, market, scenario, belief="exogenous", anticipate=False)
-print(
-    {
-        k: round(v, 1) if isinstance(v, float) else v
-        for k, v in row.items()
-        if k
-        in (
-            "S_B0",
-            "S_B1",
-            "S_R",
-            "efficiency",
-            "value_of_flexibility",
-            "bill_total",
-            "recovery_reserve",
-            "fairness_reserve",
-            "price_error",
-        )
-    }
-)
+# ## 5. The bill settles; the metrics are calculated
 
+# %%
+bill_b0 = fl.settle(tau, scenario, b0, b0)
+bill_r = fl.settle(tau, scenario, dispatch, b0)
+bills = {"layer": list(bill_b0)}
+bills["B0"], bills["R"] = list(bill_b0.values()), list(bill_r.values())
+print(pl.DataFrame(bills))
 align = fl.alignment(tau, market, scenario, dispatch, b0)
-print(align.filter(pl.col("layer") == "reserve").sort("wedge", descending=True).head(5))
 print(align.group_by("layer").agg(pl.col("wedge").abs().mean().alias("mean_abs_wedge")))
 
 # %% [markdown]
-# ## The consistent price-taker: a fixed point
-#
-# Respond, clear at the response, make that the belief, repeat. Under a step
-# merit order the map can cycle at scarcity hours; the harmonic step averages it
-# out and `history` shows whether it settled.
+# ## Benchmarks: B0 is step 2; B1 is the planner
+
+# %%
 t0 = time.time()
-d_c, s_c, dispatch_c, believed, history = fl.fixed_point(
-    theta, tau, market, scenario, max_iter=20, damping=None
-)
-print(
-    f"{len(history)} iterations in {time.time() - t0:.0f}s, last change {history[-1]:.2f} MW, price error {np.abs(believed.lam - dispatch_c.lam).mean():.1f} $/MWh"
-)
-print(
-    f"S_R exogenous {fl.S(theta, market, scenario, dispatch):,.0f}  consistent {fl.S(theta, market, scenario, dispatch_c):,.0f}  S_B1 {S_B1:,.0f}"
-)
+d_b1, sigma_b1, S_B1 = fl.planner(theta, market, scenario)
+print(f"planner in {time.time() - t0:.1f}s")
+row = fl.summary(theta, tau, market, scenario, b1=(d_b1, sigma_b1, S_B1))
+keys = ("S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility", "bill_total")
+print({k: round(row[k], 1) for k in keys})
 
 # %% [markdown]
-# ## The operator's table: types under today's tariff, one week
+# ## The consistent price-taker: steps 2-4 iterated to a fixed point
 #
-# The operator's objective is a rule over this table: max-min welfare over the
-# types, with the inflexible load left out, subject to recovery. Deliverable I
-# has one tariff, so the rule has nothing to choose yet; the rows are RQ1.
+# Harmonic damping averages out the cycle a step merit order can produce.
+
+# %%
 t0 = time.time()
-types = fl.named_types(scenario.T, "data_center")
-table = fl.table(
-    {k: types[k] for k in ("mover", "controllable", "emergency", "curtailable")},
-    fl.named_tariffs(scenario),
-    [market],
-    [scenario],
-    belief="exogenous",
-    anticipate=False,
-)
+fp = fl.fixed_point(theta, tau, market, scenario, max_iter=20, damping=None)
+d_c, s_c, dispatch_c, believed, history = fp
+print(f"{len(history)} rounds in {time.time() - t0:.0f}s")
+print(f"last change {history[-1]:.2f} MW")
+print(f"S_R exogenous {fl.S(theta, market, scenario, dispatch):,.0f}")
+print(f"S_R consistent {fl.S(theta, market, scenario, dispatch_c):,.0f}")
+print(f"S_B1 {S_B1:,.0f}")
+
+# %% [markdown]
+# ## The table: one row per type (RQ1)
+
+# %%
+t0 = time.time()
+types = fl.named_types(T, BUSINESS)
+table = fl.table(types, fl.named_tariffs(scenario), [market], [scenario])
 print(f"{table.shape[0]} rows in {time.time() - t0:.0f}s")
-print(
-    table.select(
-        "type",
-        "S_B0",
-        "S_B1",
-        "S_R",
-        "efficiency",
-        "value_of_flexibility",
-        "bill_total",
-        "recovery_reserve",
-        "fairness_reserve",
-        "price_error",
-    )
-)
+cols = ("type", "S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility")
+print(table.select(*cols))
 
 # %% [markdown]
-# ## Figure
-out = Path(__file__).parent / "figures" if "__file__" in globals() else Path("figures")
+# ## The learner across windows
+
+# %%
+trace, _ = fl.learn(theta, tau, market, weeks[LEARN_WEEKS], eta=ETA)
+print(trace)
+
+# %% [markdown]
+# ## Figure: prices and consumption on the window
+
+# %%
+import matplotlib
+
+matplotlib.use("Agg")
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+
+here = Path(__file__).parent if "__file__" in globals() else Path(".")
+out = here / "figures"
 out.mkdir(exist_ok=True)
 fig, ax = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
 ax[0].plot(b0.lam, label="lambda at B0")
@@ -203,13 +167,11 @@ ax[0].plot(dispatch.lam, label="lambda at R", alpha=0.7)
 ax[0].set_ylabel("$/MWh")
 ax[0].legend()
 ax[1].plot(scenario.delta, label="delta")
-ax[1].plot(d, label="d (exogenous price-taker)")
-ax[1].plot(d1, label="d (planner)", alpha=0.7)
+ax[1].plot(d_bid, label="d_bid, exogenous price-taker")
+ax[1].plot(d_b1, label="d, planner", alpha=0.7)
 ax[1].set_ylabel("MW")
-ax[1].set_xlabel("hour of week")
+ax[1].set_xlabel("hour of window")
 ax[1].legend()
 fig.tight_layout()
-fig.savefig(out / "walkthrough_week31.png", dpi=120)
-print("saved", out / "walkthrough_week31.png")
-
-# %%
+fig.savefig(out / f"walkthrough_week{WEEK}.png", dpi=120)
+print("saved", out / f"walkthrough_week{WEEK}.png")
