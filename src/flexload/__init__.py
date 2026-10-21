@@ -15,11 +15,11 @@
 
 from .load import BETA, BUSINESS, P, PSI, LoadType, V, best_response, blocks, c_sigma, elect, feasible, fixed_point, named_types, payoff, planner
 from .metrics import S, alignment, choose, fairness, learn, recovery, respond, settle, summary, table
-from .system import C_inv, DemandCurve, Dispatch, Market, Scenario, margin, scenario, tighten, windows
+from .system import C_inv, Dispatch, ORDC, Market, Scenario, margin, scenario, tighten, windows
 from .tariff import Menu, Share, Tariff, TwoPart, all_hours, named_tariffs, peak_hour, share, total, two_part
 
 __all__ = [
-    "BETA", "BUSINESS", "C_inv", "DemandCurve", "Dispatch", "LoadType", "Market", "Menu", "P", "PSI", "S", "Scenario", "Share", "Tariff",
+    "BETA", "BUSINESS", "C_inv", "Dispatch", "LoadType", "Market", "Menu", "ORDC", "P", "PSI", "S", "Scenario", "Share", "Tariff",
     "TwoPart", "V", "alignment", "all_hours", "best_response", "blocks", "c_sigma", "choose", "elect", "fairness", "feasible",
     "fixed_point", "learn", "margin", "named_tariffs", "named_types", "payoff", "peak_hour", "planner",
     "recovery", "respond", "scenario", "settle", "share", "summary", "table", "tighten", "total", "two_part", "windows",

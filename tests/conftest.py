@@ -25,7 +25,7 @@ def small() -> Scenario:
         nameplate=nameplate,
         unit=np.array([0, 1, 2]),
         names=("base", "mid", "peaker"),
-        forecast_error=10.0,  # MW; sets the ERCOT curve
+        epsilon_std=10.0,  # MW; sets the ERCOT curve
     )
 
 

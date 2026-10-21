@@ -27,7 +27,7 @@ nothing else. Aligned 2026-10-21. Private repo.
 | ω = (d°, cᵘ, cʳ, cⁱⁿᵛ, ū), δ = α × system load | `Scenario(delta, d_other, cost_gen, cost_res, cost_inv, capacity, nameplate, unit, names, start)` | `system.py` |
 | operating window 𝒯, the year, α, tightness | `scenario(start, T, alpha, reserve_margin)`; `windows(T, alpha, reserve_margin)` (the year, one tightness scale); `tighten`; `margin` | `system.py` |
 | PJM / ERCOT, γ, cⱽᴼᴸᴸ, Cⁱⁿᵛ (annual) | `Market(reserve, gamma, voll, long_run, ordc, C_inv, solver)` | `system.py` |
-| ORDC steps (w_s, π_s), π(z) = VOLL·Pr[ε > z − R̲]; ε from day-ahead vs real-time net load by month | `DemandCurve.from_lolp(voll, min_contingency, forecast_error, steps)`; `Scenario.forecast_error`; `market.curve(scenario)` with R̲ = the largest unit | `system.py` |
+| ORDC steps (w_s, π_s), π(z) = VOLL·Pr[ε > z − R̲]; ε ~ N(0, σ²) from day-ahead vs real-time net load, one σ for the year | `ORDC.from_lolp(voll, min_contingency, epsilon_std, steps)`; `Scenario.epsilon_std`; `market.ordc_for(scenario)` with R̲ = the largest unit | `system.py` |
 | dispatch 𝓜_ω(d, σ) | `market.clear(scenario, d_bid, sigma_bid, c_sigma, d_firm) -> Dispatch` | `system.py` |
 | (u, r, σᶜˡʳ, dᶜᵘʳᵗ, s), (λ, μ, ν), Π_t, Cᵏ | `Dispatch(d, sigma, u, r, shed, lam, mu, nu, eta, Pi, C_energy, C_res, C_inv, d_bid, sigma_bid, ...)`: `d, sigma` are what cleared, `d_bid, sigma_bid` what the load offered | `system.py` |
 | Cⁱⁿᵛ := (T/8760) Σⱼ(cⁱⁿᵛⱼ − Σ_year νⱼₜ)ūⱼ | `C_inv(market, windows)`, annual; `clear` prorates. Not "missing money": that needs a price cap, which there is none of yet | `system.py` |
@@ -76,7 +76,7 @@ inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 
 ```
 src/flexload/
-  system.py   Scenario; scenario, windows, tighten, margin; DemandCurve.from_lolp; Dispatch; Market (curve, C_sys, constraints, clear, marginal_cost); C_inv
+  system.py   Scenario; scenario, windows, tighten, margin; ORDC.from_lolp; Dispatch; Market (ordc_for, C_sys, constraints, clear, marginal_cost); C_inv
   tariff.py   all_hours, peak_hour; Share, TwoPart (+ share, two_part); Tariff (bill, marginal); Menu; total; named_tariffs
   load.py     LoadType; blocks; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; payoff; best_response; elect; fixed_point; planner
   metrics.py  settle; S; recovery; alignment; fairness; respond; summary; table; choose; learn

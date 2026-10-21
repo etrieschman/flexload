@@ -205,8 +205,8 @@ def planner(theta: LoadType, market: Market, scenario: Scenario, solver: str = "
     y = cp.Variable(J, nonneg=True) if market.long_run else scenario.nameplate
     d_firm = theta.d_firm(delta) if theta.curtailable else d
     if market.reserve == "ercot":
-        z = cp.Variable((market.curve(scenario).widths.size, T), nonneg=True)
-        Pi = market.curve(scenario).prices @ z
+        z = cp.Variable((market.ordc_for(scenario).widths.size, T), nonneg=True)
+        Pi = market.ordc_for(scenario).prices @ z
     else:
         z, Pi = None, np.zeros(T)
     cons = feasible(theta, delta, d, sigma) + list(market.constraints(scenario, sigma, d_firm, u, r, sigma_clr, d, y, z, shed).values())

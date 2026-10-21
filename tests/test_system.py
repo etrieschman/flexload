@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from flexload.system import HOURS_PER_YEAR, C_inv, DemandCurve, Market, margin, tighten
+from flexload.system import HOURS_PER_YEAR, C_inv, Market, ORDC, margin, tighten
 
 
 def b0(market, small, d_firm=None):
@@ -36,7 +36,7 @@ def test_pjm_reserve_covers_largest_unit(pjm, small):
 
 
 def test_ercot_demand_curve_price_reads_off_curve(small):
-    curve = DemandCurve(widths=np.array([10.0, 10.0, np.inf]), prices=np.array([100.0, 40.0, 0.0]))
+    curve = ORDC(widths=np.array([10.0, 10.0, np.inf]), prices=np.array([100.0, 40.0, 0.0]))
     market = Market(reserve="ercot", gamma=0.0, ordc=curve, C_inv=0.0)
     dp = b0(market, small)
     # reserve is free (no reserve cost, slack capacity): the LP fills the curve until the price is zero

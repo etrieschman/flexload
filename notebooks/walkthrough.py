@@ -44,14 +44,14 @@ print(
 # The cost of the investment layer Cⁱⁿᵛ is annual: investment cost less the rents
 # capacity earns on the B0 path over the year, prorated to the window. It takes
 # 52 clearings and is cached. Under ERCOT the reserve demand curve is fit to the
-# window's forecast error, with R̲ at the largest unit.
+# data's net-load forecast error, with R̲ at the largest unit.
 
 # %%
 market = fl.Market(reserve="ercot")  # or "pjm"; gamma, voll, long_run are fields
 market = replace(market, C_inv=fl.C_inv(market, weeks))
 print(f"annual investment-layer cost {market.C_inv / 1e6:,.1f} M$; this window's share {market.C_inv * 168 / 8760 / 1e6:,.2f} M$")
-curve = market.curve(scenario)
-print(f"forecast error {scenario.forecast_error:,.0f} MW; ORDC steps (MW wide, $/MWh): {list(zip(np.round(curve.widths).tolist(), np.round(curve.prices).tolist()))[:4]} ...")
+curve = market.ordc_for(scenario)
+print(f"forecast error σ_ε {scenario.epsilon_std:,.0f} MW; ORDC steps (MW wide, $/MWh): {list(zip(np.round(curve.widths).tolist(), np.round(curve.prices).tolist()))[:4]} ...")
 tau = fl.named_tariffs(scenario)["tau_0"]  # today's tariff
 theta = fl.named_types(scenario.T, "data_center")["mover"]  # θ₁ as a data center
 offer = fl.c_sigma(theta, scenario.delta)  # the mover sells no reserve, so this is zero
