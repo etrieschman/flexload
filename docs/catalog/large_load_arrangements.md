@@ -23,6 +23,8 @@ The **base** is the quantity a charge lands on; tariffs call it the billing dete
 | transmission | 4CP: demand in four summer 15-minute system peaks | Network Service Peak Load, zonal coincident peak, plus Schedule 12 |
 | supply | zero unless the load sells | zero unless the load sells |
 
+How each of these charges is built, layer by layer with formulas and sources, is in `bill_decomposition.md`. The two bases a mover responds to, ERCOT's 4CP and PJM's Network Service Peak Load and Peak Load Contribution, are described there, not here: they are what every load faces, not designations.
+
 **Operations.** A rule does one of four things to a load; a load does one of three things in response.
 
 | actor | operation | meaning | example |
@@ -94,13 +96,6 @@ The **base** is the quantity a charge lands on; tariffs call it the billing dete
 - **Bill.** Bases unchanged; the value of $d - g$ at them shrinks. energy · $d - g$ · $\lambda$ · `move`; transmission · 4CP measured net · TCOS rate · `move`; review · `GATE`.
 - **Point.** Netting reduces the base on layers whose cost driver is not net withdrawal. Reserve, adequacy and transmission pay for serving the load when the co-located generator is out; netting shrinks the measured quantity without shrinking that obligation.
 
-### 1.7 Four Coincident Peak
-- **Rule.** 16 TAC §25.192 — [rule text](https://ftp.puc.texas.gov/public/puct-info/agency/rulesnlaws/subrules/electric/25.192/25.192.pdf); [4CP data](https://www.ercot.com/mktinfo/data_agg/4cp).
-- **What.** Not a designation: the transmission base every ERCOT load faces. Each provider's rate is its approved cost of service over average ERCOT demand in four 15-minute system peaks, one each June through September, identified after the fact. ERCOT files each provider's 4CP demand by 1 December for the following year.
-- **Constrains.** Nothing; it rewards `move`.
-- **Bill.** transmission · demand in the four peak intervals · TCOS over total 4CP · `move`, large.
-- **Point.** A load can shed most of its annual transmission charge by curtailing for about an hour a year, whether or not that reduces transmission cost. The pool is fixed, so one load's avoidance raises everyone else's rate: incidence, not alignment. Under replacement (§3).
-
 ---
 
 ## 2. PJM
@@ -146,13 +141,8 @@ The **base** is the quantity a charge lands on; tariffs call it the billing dete
 - **Bill.** transmission · gross or contract demand · zonal rate, CD rates developing · `BASE`, `MENU`; adequacy · gross / contract / none by service · RPM price · `BASE`, `MENU`; reserve · gross demand for regulation and black start · existing rates · `BASE`; energy · $d - g$ with netting capped · $\lambda$ · `BASE`.
 - **Point.** The clearest `MENU` in either market: three services sorted by how much the load relies on the grid, an explicit price on firmness ERCOT does not offer. Non-Firm Contract Demand makes curtailability a property the load elects, with a declared firm level. No service product was final at the status date.
 
-### 2.6 Transmission and capacity bases
-- **Rule.** OATT network and point-to-point provisions; Schedule 9; [Schedule 12](https://agreements.pjm.com/eTariff/transformedTariffs/oatt/Sections/4424.html); RAA; [billing reference](https://www.pjm.com/-/media/DotCom/markets-ops/settlements/custgd.pdf).
-- **What.** Not a designation: the defaults all PJM load faces. Network transmission service on **Network Service Peak Load**, a zonal coincident-peak contribution, one or five peaks by zone, reset 1 January. Schedule 12 enhancement costs by non-coincident load-ratio or distribution factors. Capacity obligation through **Peak Load Share**, from Peak Load Contribution at the five highest RTO summer peaks.
-- **Bill.** transmission · NSPL · zonal NITS rate · `move`; transmission · NCP load ratio or DFAX · Schedule 12 · `move`, weaker; adequacy · PLC · RPM zonal price · `move`.
-- **Point.** Same family as 4CP, less concentrated: zonal not system-wide, five intervals not four, and two bases, so avoiding one does not avoid the other.
 
-### 2.7 Large Load Additions and the Expedited Interconnection Track
+### 2.6 Large Load Additions and the Expedited Interconnection Track
 - **Rule.** Critical Issue Fast Path, August 2025; Board letter 16 January 2026 — [letter](https://www.pjm.com/-/media/DotCom/about-pjm/who-we-are/public-disclosures/2026/20260116-pjm-board-letter-re-results-of-the-cifp-process-large-load-additions.pdf); Expedited Interconnection Track, ER26-1563, accepted 9 June 2026.
 - **What.** A large load addition is 50 MW or more at one point of interconnection. The process produced a bring-your-own-generation expedited track (generation above 250 MW UCAP, ten projects a year, three-year site control) and a connect-and-manage curtailable path for loads without generation.
 - **Constrains.** Access timing; $g > 0$ becomes a condition of expedited access.
