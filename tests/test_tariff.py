@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 
 from flexload.system import Dispatch
-from flexload.tariff import Tariff, all_hours, peak_hour, share, two_part
+from flexload.tariff import Marginal, Share, Tariff, TwoPart, peak_hour
 
 T = 4
 d = np.array([10.0, 20.0, 30.0, 20.0])
@@ -31,12 +31,12 @@ def values(bill) -> dict[str, float]:
 
 
 def test_energy_settles_at_lambda():
-    tau = Tariff(share(all_hours(T)), share(peak))
+    tau = Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak))
     assert np.isclose(values(tau.bill(d, sigma, dispatch(), d_other))["energy"], lam @ d)
 
 
 def test_share_splits_the_pool_by_base():
-    tau = Tariff(share(all_hours(T)), share(peak))
+    tau = Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak))
     own = values(tau.bill(d, sigma, dispatch(), d_other))
     others = values(tau.bill(d_other, np.zeros(T), dispatch(), d, own=False))
     assert np.isclose(own["reserve"] + others["reserve"], C_res.sum())
@@ -45,7 +45,7 @@ def test_share_splits_the_pool_by_base():
 
 
 def test_two_part_collects_the_pool():
-    tau = Tariff(two_part(all_hours(T), phi=0.03), two_part(peak, phi=0.0))
+    tau = Tariff(Marginal(np.ones(T)), TwoPart(np.ones(T), phi=0.03), TwoPart(peak, phi=0.0))
     own = values(tau.bill(d, sigma, dispatch(), d_other))
     others = values(tau.bill(d_other, np.zeros(T), dispatch(), d, own=False))
     assert np.isclose(own["reserve"] + others["reserve"], C_res.sum())
@@ -54,12 +54,12 @@ def test_two_part_collects_the_pool():
 
 
 def test_two_part_lump_sum_can_be_given():
-    tau = Tariff(two_part(all_hours(T), phi=0.0, T=123.0), share(peak))
+    tau = Tariff(Marginal(np.ones(T)), TwoPart(np.ones(T), phi=0.0, T=123.0), Share(peak))
     assert np.isclose(values(tau.bill(d, sigma, dispatch(), d_other))["reserve"], 123.0)
 
 
 def test_rate_taker_bill_is_linear_in_d_and_exact_at_d_hat():
-    tau = Tariff(share(all_hours(T)), share(peak))
+    tau = Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak))
     x = d + np.array([1.0, -2.0, 3.0, -2.0])
     at_rate = values(tau.bill(x, sigma, dispatch(), d_other, d_hat=d))
     rate_res, rate_inv = C_res / (d + d_other), C_inv / (d[2] + d_other[2])
@@ -68,25 +68,39 @@ def test_rate_taker_bill_is_linear_in_d_and_exact_at_d_hat():
 
 
 def test_marginal_charge_matches_the_derivative():
-    tau = Tariff(share(all_hours(T)), share(peak))
+    tau = Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak))
     m = tau.marginal(d, dispatch(), d_other)
     assert np.allclose(m["energy"], lam)
     assert np.allclose(m["reserve"], C_res * d_other / (d + d_other) ** 2)
     expect_inv = np.zeros(T)
     expect_inv[2] = C_inv * d_other[2] / (d[2] + d_other[2]) ** 2
     assert np.allclose(m["investment"], expect_inv)
-    tau2 = Tariff(two_part(all_hours(T), phi=0.03), share(peak))
+    tau2 = Tariff(Marginal(np.ones(T)), TwoPart(np.ones(T), phi=0.03), Share(peak))
     assert np.allclose(tau2.marginal(d, dispatch(), d_other)["reserve"], 0.03 * mu)
 
 
 def test_reserve_payment_is_a_credit():
-    tau = Tariff(share(all_hours(T)), share(peak))
+    tau = Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak))
     assert np.isclose(values(tau.bill(d, sigma, dispatch(), d_other))["credit"], -(mu @ sigma))
 
 
 def test_exemption_applies_to_a_curtailable_load_only():
-    tau = Tariff(share(all_hours(T)), share(peak), exempt_curtailable=True)
+    tau = Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak), exempt_curtailable=True)
     curtailable = dispatch(d_firm=0.8 * d)
     assert values(tau.bill(d, sigma, curtailable, d_other))["reserve"] == 0.0
     assert values(tau.bill(d_other, np.zeros(T), curtailable, d, own=False))["reserve"] > 0.0
     assert values(tau.bill(d, sigma, dispatch(), d_other))["reserve"] > 0.0
+
+
+def test_knowing_the_share_uses_the_true_slope_and_is_exact_at_d_hat():
+    """Posted rate: the average rate C/(x̂ + x°). Knows its share: the tangent of
+    C x/(x + x°) at x̂, slope C x°/(x̂ + x°)². Both give the exact charge at x = x̂."""
+    tau = Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak))
+    exact = values(tau.bill(d, sigma, dispatch(), d_other))["reserve"]
+    assert np.isclose(values(tau.bill(d, sigma, dispatch(), d_other, d_hat=d, knows_share=True))["reserve"], exact)
+    x = d + 1.0
+    posted = values(tau.bill(x, sigma, dispatch(), d_other, d_hat=d))["reserve"] - exact
+    knowing = values(tau.bill(x, sigma, dispatch(), d_other, d_hat=d, knows_share=True))["reserve"] - exact
+    assert np.isclose(posted, np.sum(C_res / (d + d_other)))
+    assert np.isclose(knowing, np.sum(C_res * d_other / (d + d_other) ** 2))
+    assert knowing < posted  # the true marginal charge is smaller by the factor x°/(x + x°)

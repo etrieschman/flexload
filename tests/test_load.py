@@ -7,7 +7,7 @@ import numpy as np
 from flexload.load import LoadType, best_response, c_sigma, fixed_point, named_types, planner, blocks
 from flexload.metrics import S, choose, recovery, respond, summary, table
 from flexload.system import Dispatch, Market
-from flexload.tariff import Tariff, all_hours, named_tariffs, peak_hour, share
+from flexload.tariff import Marginal, Share, Tariff, named_tariffs, peak_hour
 
 
 def belief(lam, mu, delta) -> Dispatch:
@@ -19,7 +19,7 @@ def belief(lam, mu, delta) -> Dispatch:
 
 
 def energy_only(T) -> Tariff:
-    return Tariff(share(all_hours(T)), share(peak_hour(np.arange(T))))
+    return Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak_hour(np.arange(T))))
 
 
 def small_scenario(T, delta):
@@ -96,7 +96,7 @@ def test_fixed_point_cycles_when_the_band_straddles_a_step(pjm, small):
 
 def test_share_on_realized_pools_recovers_exactly(pjm, small):
     theta = named_types(small.T)["mover"]
-    realized = Tariff(share(all_hours(small.T), ex_ante=False), share(peak_hour(small.d_sys), ex_ante=False))
+    realized = Tariff(Marginal(np.ones(small.T)), Share(np.ones(small.T), ex_ante=False), Share(peak_hour(small.d_sys), ex_ante=False))
     dispatch, ex_ante, _, _ = respond(theta, realized, pjm, small)
     rho = recovery(realized, small, dispatch, ex_ante)
     assert abs(rho["reserve"]) < 1e-6 and abs(rho["investment"]) < 1e-6

@@ -161,11 +161,23 @@ def _epsilon_std() -> float:
         total = 0.0
         for kind, sign in (("load", 1.0), ("wind", -1.0), ("pv", -1.0), ("rtpv", -1.0)):
             series = rts.timeseries(kind, market)
-            total = total + sign * series.select(pl.sum_horizontal([c for c in series.columns if c not in rts.TIME_COLS])).to_numpy().ravel()
+            total = (
+                total
+                + sign
+                * series.select(
+                    pl.sum_horizontal(
+                        [c for c in series.columns if c not in rts.TIME_COLS]
+                    )
+                )
+                .to_numpy()
+                .ravel()
+            )
         return total
 
     day_ahead = net_load("day_ahead")  # hourly
-    real_time = net_load("real_time").reshape(-1, 12).mean(axis=1)  # twelve five-minute values per hour
+    real_time = (
+        net_load("real_time").reshape(-1, 12).mean(axis=1)
+    )  # twelve five-minute values per hour
     return float(np.std(real_time - day_ahead))
 
 
@@ -295,9 +307,7 @@ class Market:
     gamma: float = 0.03
     voll: float = 5000.0
     long_run: bool = False
-    ordc: ORDC | None = (
-        None  # ercot; None -> fit from the window's forecast error
-    )
+    ordc: ORDC | None = None  # ercot; None -> fit from the window's forecast error
     C_inv: float | None = None
     solver: str = "GUROBI"
     solver_options: dict = field(default_factory=dict)
@@ -307,7 +317,11 @@ class Market:
         output (the contingency PJM's row protects against) and the data's ε."""
         if self.ordc is not None:
             return self.ordc
-        return ORDC.from_lolp(self.voll, float((scenario.units @ scenario.nameplate).max()), scenario.epsilon_std)
+        return ORDC.from_lolp(
+            self.voll,
+            float((scenario.units @ scenario.nameplate).max()),
+            scenario.epsilon_std,
+        )
 
     # --- the objective and constraints, written once; used by clear, planner, S --
     def C_sys(self, scenario: Scenario, u, r, sigma, c_sigma, shed, y, Pi):

@@ -16,11 +16,11 @@
 from .load import BETA, BUSINESS, P, PSI, LoadType, V, best_response, blocks, c_sigma, elect, feasible, fixed_point, named_types, payoff, planner
 from .metrics import S, alignment, choose, fairness, learn, recovery, respond, settle, summary, table
 from .system import C_inv, Dispatch, ORDC, Market, Scenario, margin, scenario, tighten, windows
-from .tariff import Menu, Share, Tariff, TwoPart, all_hours, named_tariffs, peak_hour, share, total, two_part
+from .tariff import Marginal, Menu, Share, Tariff, TwoPart, named_tariffs, peak_hour, total
 
 __all__ = [
-    "BETA", "BUSINESS", "C_inv", "Dispatch", "LoadType", "Market", "Menu", "ORDC", "P", "PSI", "S", "Scenario", "Share", "Tariff",
-    "TwoPart", "V", "alignment", "all_hours", "best_response", "blocks", "c_sigma", "choose", "elect", "fairness", "feasible",
+    "BETA", "BUSINESS", "C_inv", "Dispatch", "LoadType", "Marginal", "Market", "Menu", "ORDC", "P", "PSI", "S", "Scenario", "Share", "Tariff",
+    "TwoPart", "V", "alignment", "best_response", "blocks", "c_sigma", "choose", "elect", "fairness", "feasible",
     "fixed_point", "learn", "margin", "named_tariffs", "named_types", "payoff", "peak_hour", "planner",
-    "recovery", "respond", "scenario", "settle", "share", "summary", "table", "tighten", "total", "two_part", "windows",
+    "recovery", "respond", "scenario", "settle", "summary", "table", "tighten", "total", "windows",
 ]

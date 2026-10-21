@@ -115,7 +115,7 @@ def feasible(theta: LoadType, delta: np.ndarray, d, sigma) -> list:
 # ----------------------------------------------------------------------------
 # R
 # ----------------------------------------------------------------------------
-def payoff(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch, d, sigma, d_hat: np.ndarray, curtailed: np.ndarray | None = None):
+def payoff(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch, d, sigma, d_hat: np.ndarray, curtailed: np.ndarray | None = None, knows_share: bool = False):
     """V(d̃, σ̃) − B(d̃, σ̃) under the belief. The memo's tilde quantities for a
     price-taker: σ̃ = σ 𝟙[μ̄ ≥ c^σ], and d̃ = dᶠⁱʳᵐ in the hours ``curtailed`` where the
     load anticipates curtailment, the bid elsewhere."""
@@ -126,13 +126,15 @@ def payoff(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch
     if curtailed is not None and theta.curtailable:
         m = np.asarray(curtailed, float)
         d_t = cp.multiply(1.0 - m, d) + m * theta.d_firm(delta)
-    return V(theta, delta, d_t, sigma_t) - total(tariff.bill(d_t, sigma_t, belief, scenario.d_other, d_hat=d_hat))
+    return V(theta, delta, d_t, sigma_t) - total(tariff.bill(d_t, sigma_t, belief, scenario.d_other, d_hat=d_hat, knows_share=knows_share))
 
 
-def best_response(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch, d_hat: np.ndarray | None = None, curtailed: np.ndarray | None = None, solver: str = "GUROBI") -> tuple[np.ndarray, np.ndarray]:
+def best_response(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: Dispatch, d_hat: np.ndarray | None = None, curtailed: np.ndarray | None = None, knows_share: bool = False, solver: str = "GUROBI") -> tuple[np.ndarray, np.ndarray]:
     """max payoff over 𝒟_θ: a QP. ``d_hat`` defaults to the belief's consumption
-    (δ for the exogenous price-taker). Where the offer is believed not to clear
-    the load offers nothing (memo). Returns (d, σ)."""
+    (δ for the exogenous price-taker). ``knows_share``: the load knows its charge
+    is its share of each pool (the consistent price-taker); otherwise it takes
+    the posted average rate. Where the offer is believed not to clear the load
+    offers nothing. Returns the bid (d, σ)."""
     T, delta = scenario.T, scenario.delta
     d_hat = belief.d if d_hat is None else d_hat
     d = cp.Variable(T)
@@ -142,20 +144,20 @@ def best_response(theta: LoadType, tariff: Tariff, scenario: Scenario, belief: D
         clears = belief.mu >= c_sigma(theta, delta) - 1e-12
         if not clears.all():
             cons.append(sigma[~clears] == 0.0)
-    problem = cp.Problem(cp.Maximize(payoff(theta, tariff, scenario, belief, d, sigma, d_hat, curtailed)), cons)
+    problem = cp.Problem(cp.Maximize(payoff(theta, tariff, scenario, belief, d, sigma, d_hat, curtailed, knows_share)), cons)
     problem.solve(solver=solver)
     if problem.status not in ("optimal", "optimal_inaccurate"):
         raise RuntimeError(f"best response failed: {problem.status}")
     return np.asarray(d.value), np.maximum(np.asarray(sigma.value), 0.0) if theta.offers else sigma
 
 
-def elect(theta: LoadType, menu: Menu, scenario: Scenario, belief: Dispatch, d_hat: np.ndarray | None = None, curtailed: np.ndarray | None = None) -> Tariff:
+def elect(theta: LoadType, menu: Menu, scenario: Scenario, belief: Dispatch, d_hat: np.ndarray | None = None, curtailed: np.ndarray | None = None, knows_share: bool = False) -> Tariff:
     """The option with the highest payoff at its own best response."""
     d_hat = belief.d if d_hat is None else d_hat
     best, best_value = None, -np.inf
     for option in menu.options:
-        d, sigma = best_response(theta, option, scenario, belief, d_hat, curtailed)
-        value = float(payoff(theta, option, scenario, belief, d, sigma, d_hat, curtailed).value)
+        d, sigma = best_response(theta, option, scenario, belief, d_hat, curtailed, knows_share)
+        value = float(payoff(theta, option, scenario, belief, d, sigma, d_hat, curtailed, knows_share).value)
         if value > best_value:
             best, best_value = option, value
     return best
@@ -163,7 +165,8 @@ def elect(theta: LoadType, menu: Menu, scenario: Scenario, belief: Dispatch, d_h
 
 def fixed_point(theta: LoadType, tariff: Tariff, market: Market, scenario: Scenario, anticipate: bool = False, tol: float = 1e-3, max_iter: int = 50, damping: float | None = 0.5) -> tuple[np.ndarray, np.ndarray, Dispatch, Dispatch, list[float]]:
     """The consistent price-taker: respond to the belief, clear at the response,
-    make that the belief, repeat until the bid stops moving. Each step moves a
+    make that the belief, repeat until the bid stops moving. It knows its own
+    share, so each round also moves the tangent of its charge to the last bid. Each step moves a
     fraction ``damping`` toward the new response; ``None`` is the harmonic step
     1/(k+1), which averages out the two-cycles a step merit order produces at
     scarcity hours. Returns (d, σ, dispatch at the response, the belief the
@@ -175,7 +178,7 @@ def fixed_point(theta: LoadType, tariff: Tariff, market: Market, scenario: Scena
     d_prev, sigma_prev, history = delta.copy(), np.zeros(T), []
     for k in range(max_iter):
         curtailed = (belief.lam >= market.voll - 1e-6) if anticipate else None  # shortage hours: λ̃ at VOLL
-        d, sigma = best_response(theta, tariff, scenario, belief, d_prev, curtailed)
+        d, sigma = best_response(theta, tariff, scenario, belief, d_prev, curtailed, knows_share=True)
         step = damping if damping is not None else 1.0 / (k + 1)
         d, sigma = step * d + (1 - step) * d_prev, step * sigma + (1 - step) * sigma_prev
         history.append(float(np.abs(d - d_prev).max() + np.abs(sigma - sigma_prev).max()))

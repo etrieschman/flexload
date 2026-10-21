@@ -46,12 +46,15 @@ print(
 # 52 clearings and is cached. Under ERCOT the reserve demand curve is fit to the
 # data's net-load forecast error, with R̲ at the largest unit.
 
-# %%
 market = fl.Market(reserve="ercot")  # or "pjm"; gamma, voll, long_run are fields
 market = replace(market, C_inv=fl.C_inv(market, weeks))
-print(f"annual investment-layer cost {market.C_inv / 1e6:,.1f} M$; this window's share {market.C_inv * 168 / 8760 / 1e6:,.2f} M$")
+print(
+    f"annual investment-layer cost {market.C_inv / 1e6:,.1f} M$; this window's share {market.C_inv * 168 / 8760 / 1e6:,.2f} M$"
+)
 curve = market.ordc_for(scenario)
-print(f"forecast error σ_ε {scenario.epsilon_std:,.0f} MW; ORDC steps (MW wide, $/MWh): {list(zip(np.round(curve.widths).tolist(), np.round(curve.prices).tolist()))[:4]} ...")
+print(
+    f"forecast error σ_ε {scenario.epsilon_std:,.0f} MW; ORDC steps (MW wide, $/MWh): {list(zip(np.round(curve.widths).tolist(), np.round(curve.prices).tolist()))[:4]} ..."
+)
 tau = fl.named_tariffs(scenario)["tau_0"]  # today's tariff
 theta = fl.named_types(scenario.T, "data_center")["mover"]  # θ₁ as a data center
 offer = fl.c_sigma(theta, scenario.delta)  # the mover sells no reserve, so this is zero
@@ -64,7 +67,6 @@ print(
 #
 # `clear` is 𝓜_ω(d, σ). The dispatch carries λ, μ and the cost of each layer.
 
-# %%
 t0 = time.time()
 b0 = market.clear(
     scenario, scenario.delta, np.zeros(scenario.T), offer, theta.d_firm(scenario.delta)
@@ -81,7 +83,6 @@ print(
 #
 # A QP in (d, σ). The belief is the B0 dispatch: prices, layer costs and the rate at δ are taken as given.
 
-# %%
 d, sigma = fl.best_response(theta, tau, scenario, belief=b0)
 dispatch = market.clear(scenario, d, sigma, offer, theta.d_firm(scenario.delta))
 print(
@@ -94,7 +95,6 @@ print("hours the load moved most:", np.argsort(-np.abs(d - scenario.delta))[:8])
 #
 # Each cost-share layer's cost comes from the dispatch its `ex_ante` flag names.
 
-# %%
 bill_b0, bill_r = (
     fl.settle(tau, scenario, b0, b0),
     fl.settle(tau, scenario, dispatch, b0),
@@ -111,8 +111,6 @@ print(
 
 # %% [markdown]
 # ## B1: the planner, and the outcomes
-
-# %%
 t0 = time.time()
 d1, s1, S_B1 = fl.planner(theta, market, scenario)
 b1 = market.clear(scenario, d1, s1, offer, theta.d_firm(scenario.delta))
@@ -137,7 +135,6 @@ print(
     }
 )
 
-# %%
 align = fl.alignment(tau, market, scenario, dispatch, b0)
 print(align.filter(pl.col("layer") == "reserve").sort("wedge", descending=True).head(5))
 print(align.group_by("layer").agg(pl.col("wedge").abs().mean().alias("mean_abs_wedge")))
@@ -149,7 +146,6 @@ print(align.group_by("layer").agg(pl.col("wedge").abs().mean().alias("mean_abs_w
 # merit order the map can cycle at scarcity hours; the harmonic step averages it
 # out and `history` shows whether it settled.
 
-# %%
 t0 = time.time()
 d_c, s_c, dispatch_c, believed, history = fl.fixed_point(
     theta, tau, market, scenario, max_iter=20, damping=None
@@ -166,8 +162,6 @@ print(
 #
 # The operator's objective is a rule over this table: max-min welfare over the
 # types, with the inflexible load left out, subject to recovery.
-
-# %%
 t0 = time.time()
 tariffs = fl.named_tariffs(scenario)
 types = fl.named_types(scenario.T, "data_center")
@@ -207,14 +201,11 @@ print(
 # The load averages the prices it saw. `price_error` is how far its belief sat
 # from what cleared.
 
-# %%
-trace, _ = fl.learn(theta, tau, market, weeks[28:36], eta=0.5)
-print(trace)
+# trace, _ = fl.learn(theta, tau, market, weeks[28:36], eta=0.5)
+# print(trace)
 
 # %% [markdown]
 # ## Figure
-
-# %%
 try:
     import matplotlib
 

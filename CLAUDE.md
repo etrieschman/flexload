@@ -41,12 +41,12 @@ nothing else. Aligned 2026-10-21. Private repo.
 | B1 | `planner(theta, market, scenario) -> (d, sigma, S_B1)` | `load.py` |
 | B0 | `market.clear(scenario, delta, zeros, c_sigma, d_firm)`; no function | — |
 | the load's belief about curtailment | hours where the believed λ is at VOLL (`anticipate=True` in `respond`, `fixed_point`) | `load.py`, `metrics.py` |
-| τ: marginal (energy, fixed) / split pool / two-part; slots 𝒲ᵏ, ex ante, credit, exempt | `Tariff(reserve, investment, credit, exempt_curtailable)`; `share(w, ex_ante)`, `two_part(w, ex_ante, phi, T)`; `all_hours(T)`, `peak_hour(d_sys)` | `tariff.py` |
-| B = Σₖ Bᵏ, ∂Bᵏ/∂dₜ | `tariff.bill(d, sigma, realized, d_other, ex_ante, d_hat, own)`, `tariff.marginal(...)`; cvxpy expressions, `.value` for numbers | `tariff.py` |
+| τ: a charge form per layer, marginal / split pool / two-part; slots 𝒲ᵏ (a weight vector w), ex ante, credit, exempt | `Tariff(energy, reserve, investment, credit, exempt_curtailable)`; `Marginal(w)`, `Share(w, ex_ante)`, `TwoPart(w, ex_ante, phi, T)`; `np.ones(T)`, `peak_hour(d_sys)` | `tariff.py` |
+| B = Σₖ Bᵏ, ∂Bᵏ/∂dₜ | `tariff.bill(d, sigma, realized, d_other, ex_ante, d_hat, own)`, `tariff.marginal(...)`; one loop over the three layers; cvxpy expressions, `.value` for numbers. `marginal` holds Cᵏ fixed: exact ex ante, missing ∂Cᵏ/∂d ex post | `tariff.py` |
 | τ₀ today; τ₁…τ₅ for Workshop II (τ₅ = exemption menu) | `named_tariffs(scenario)`; `Menu(options)` | `tariff.py` |
 | settlement; S; ρᵏ; Δᵏₜ; fairness; efficiency S^B1 − S^R | `settle`, `S`, `recovery`, `alignment`, `fairness`; `summary` (columns `S_B0, S_B1, S_R, efficiency, price_error`) | `metrics.py` |
 | R under a belief; the operator's table; max-min / expected welfare s.t. g(ρ) ≤ 0 | `respond(theta, tariff, market, scenario, belief, anticipate)`; `table(types, tariffs, markets, scenarios)`; `choose(table, rule, prior, g, epsilon)` | `metrics.py` |
-| the learner (fourth belief) | `learn(theta, tariff, market, scenarios, eta)` | `metrics.py` |
+| the learner (fourth belief) | `learn(theta, tariff, market, scenarios, eta)`; takes the posted rate | `metrics.py` |
 
 Conventions: capitalized = class holding data; lowercase = function; order is always
 (d, σ). **One number system**: every formula is a cvxpy expression whether its
@@ -57,13 +57,13 @@ inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 | topic | decision |
 |---|---|
 | accounting | c^σᵀσ sits in V **and** in the LP objective (the load offers at cost). Welfare counts it once: `S = V − C_sys + c^σᵀσ`. The reserve payment μᵀσ is a **credit layer of the bill** (`Tariff.credit`); the load's payoff is V − B. |
-| the tariff is a function | two charge forms (`share`, `two_part`), one per cost-share layer, plus the `credit` and `exempt_curtailable` slots. Energy is always λᵀd. No enums, no strings: windows 𝒲ᵏ are weight vectors, `ex_ante` is a bool, φ and T are computed from the pool unless `T` is given. τ ranges over a finite set; φ and ε are swept, not optimized (report §3). |
+| the tariff is a function | three charge forms (`Marginal`, `Share`, `TwoPart`), one per layer, energy included (Erich, 2026-10-21: energy is a layer like the others), plus the `credit` and `exempt_curtailable` slots. No enums, no strings, no lowercase wrappers: hours 𝒲ᵏ are weight vectors, `ex_ante` is a bool, φ and T are computed from the pool unless `T` is given. τ ranges over a finite set; φ and ε are swept, not optimized (report §3). |
 | what the bill reads | a `Dispatch` (λ, μ and the pools ride on it) plus d°. Each layer's `ex_ante` flag picks the ex-ante or realized dispatch. Inside the load's objective the dispatch is its belief; a price-setter's belief would be a dispatch whose prices are expressions. Revised 2026-10-19 from "explicit arguments": the nine-argument signatures were the cost. |
-| rate-taker | a price-taker takes each cost-share layer's **average rate** as given at `d_hat` (δ exogenous; previous iterate consistent). C·x/(x̂+x∘) is linear in x, so the best response is a QP. At settlement x̂ = x and the share form is exact. Needs one sentence in the memo. |
+| own share (was: rate-taker) | revised 2026-10-21. The exogenous price-taker takes the **posted average rate** at x̂ = δ (ERCOT posts a provisional share). The consistent price-taker **knows its share**: its charge is linearized at x̂ with the true slope Cᵏx°/(x̂+x°)², and the fixed point iterates x̂ with the prices, so it is exact at convergence. The exact charge is concave in x, so one QP cannot do it; the iteration can. `knows_share` is the flag; `fixed_point` sets it. |
 | beliefs | no belief class. A price-taker's belief is a `Dispatch`; the learner's state (`learn`) is a dispatch with averaged fields; a price-setter's belief is the market itself (bilevel, not built; `planner` already embeds dispatch with the load's bid as a variable, which is its shape). The operator knows which belief the load holds (report §3); RQ4 relaxes that. |
-| clearing | `clear` takes dᶠⁱʳᵐ as a vector from the type (`theta.d_firm`), not a tariff. Constraints and objective are assembled once (`constraints`, `system_cost`) and shared by `clear`, `C_sys` and `planner`. Net reserve X is its own variable so per-unit rows stay sparse. |
+| clearing | `clear` takes dᶠⁱʳᵐ as a vector from the type (`theta.d_firm`), not a tariff. The cost `C_sys` and the `constraints` are written once and shared by `clear`, `planner` and `S`. Net reserve X is its own variable so per-unit rows stay sparse. |
 | curtailment | **a load type**, not a tariff (Erich, 2026-10-19): `LoadType.curtailable` declares a firm **level** dᶠⁱʳᵐ = (1−β) minₜ δₜ, constant over the window, as ERCOT SB6 and PJM Non-Firm Contract Demand use a MW level (2026-10-21; was a profile). The LP curtails only where κ > VOLL; unpaid, in exchange for connection. The planner holds the headroom instrument but consumes what it bids. τ₅'s reserve exemption is a tariff slot. |
-| operating window | T hours from `start` (report: 𝒯); the week is the default instance, nothing is hard-coded to it. cⁱⁿᵛ is annual on the scenario and prorated by T/8760. `blocks` are the hours A conserves energy over; `all_hours`/`peak_hour` are the tariff's hours 𝒲ᵏ. |
+| operating window | T hours from `start` (report: 𝒯); the week is the default instance, nothing is hard-coded to it. cⁱⁿᵛ is annual on the scenario and prorated by T/8760. `blocks` are the hours A conserves energy over; a tariff's hours 𝒲ᵏ are a weight vector, `np.ones(T)` or `peak_hour(d_sys)`. |
 | solver | Gurobi (academic license) for the LP and the QPs; 3× HiGHS on the clearing. `Market(solver="HIGHS")` and `best_response(..., solver=)` switch. |
 | scenario knobs | carve-out α with the system's shape; **no flat or area profile** until an RQ needs it; tightness by `reserve_margin` at the tightest hour, scaling load not capacity; over a year one scale factor (`windows`), so only the annual peak window is at the margin. Outages and reserve offer costs were removed 2026-10-19; restore from git when an RQ needs them. |
 | investment pool | annual missing money from the B0 run over the year, spread evenly (× T/8760); decided 2026-10-19. Not per window (negative in peak weeks), not allocated to scarcity weeks. |
@@ -77,7 +77,7 @@ inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 ```
 src/flexload/
   system.py   Scenario; scenario, windows, tighten, margin; ORDC.from_lolp; Dispatch; Market (ordc_for, C_sys, constraints, clear, marginal_cost); C_inv
-  tariff.py   all_hours, peak_hour; Share, TwoPart (+ share, two_part); Tariff (bill, marginal); Menu; total; named_tariffs
+  tariff.py   peak_hour; Marginal, Share, TwoPart; Tariff (bill, marginal); Menu; total; named_tariffs
   load.py     LoadType; blocks; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; payoff; best_response; elect; fixed_point; planner
   metrics.py  settle; S; recovery; alignment; fairness; respond; summary; table; choose; learn
 notebooks/walkthrough.py   jupytext cells; the documentation
