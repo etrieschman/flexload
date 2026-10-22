@@ -81,7 +81,7 @@ def test_welfare_ordering_B0_R_B1(pjm, small):
         theta = named_types(small.T)[name]
         d1, s1 = planner(theta, pjm, small)
         b1 = pjm.clear(small, d1, s1, c_sigma(theta, small.delta), theta.d_firm(small.delta))
-        dispatch, b0, _ = respond(theta, tau, pjm, small)
+        dispatch, b0, _, _ = respond(theta, tau, pjm, small)
         S_B1, S_R, S_B0 = (welfare(theta, pjm, small, x) for x in (b1, dispatch, b0))
         assert S_B1 >= S_R - 1e-4, name
         assert S_B1 >= S_B0 - 1e-4, name
@@ -106,7 +106,7 @@ def test_fixed_point_cycles_when_the_band_straddles_a_step(pjm, small):
 def test_share_on_realized_pools_recovers_exactly(pjm, small):
     theta = named_types(small.T)["mover"]
     realized = Tariff(Marginal(np.ones(small.T)), Share(np.ones(small.T), ex_ante=False), Share(peak_hour(small.d_sys), ex_ante=False))
-    dispatch, b0, _ = respond(theta, realized, pjm, small)
+    dispatch, b0, _, _ = respond(theta, realized, pjm, small)
     rho = recovery(realized, small, dispatch, b0)
     assert abs(rho["reserve"]) < 1e-6 and abs(rho["investment"]) < 1e-6
 
@@ -136,5 +136,5 @@ def test_curtailable_planner_is_not_hurt_by_the_instrument(pjm, small):
         d1, s1 = planner(theta, pjm, tight)
         cleared[name] = welfare(theta, pjm, tight, pjm.clear(tight, d1, s1, c_sigma(theta, tight.delta), theta.d_firm(tight.delta)))
     assert cleared["curtailable"] >= cleared["mover"] - 1e-4
-    dispatch, _, _ = respond(types["curtailable"], named_tariffs(tight)["tau_0"], pjm, tight)
+    dispatch, _, _, _ = respond(types["curtailable"], named_tariffs(tight)["tau_0"], pjm, tight)
     assert cleared["curtailable"] >= welfare(types["curtailable"], pjm, tight, dispatch) - 1e-4

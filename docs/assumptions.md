@@ -29,3 +29,6 @@ Update in the same commit as the code that changes it.
 | 22 | **Price error** of a belief is mean_t \|λ̃_t − λ_t\| between the prices the bid answered to and the prices it produced; for the consistent price-taker that is the last iterate's gap. | `summary`, `fixed_point` | 2026-10-21 |
 | 18 | **Long run**: y ≥ 0 per offer block against the block's availability shape; no minimum build, no retirement cost. | `Market.constraints` | default |
 | 23 | **Marginal charge for alignment** holds the layer's cost Cᵏ fixed: ∂Bᵏ/∂x = Cᵏ x°/(x + x°)² for a split pool. Exact for an ex-ante pool (τ₀); for an ex-post pool the term (∂Cᵏ/∂x)·x/(x + x°) is missing and needs ∂μ/∂d, the price-setter's map. | `Share.marginal` | 2026-10-21 |
+| 24 | **Efficiency share** `efficiency / value_of_flexibility` = (S^B1 − S^R)/(S^B1 − S^B0) stands where §4's tables ask for "regret share"; null when the value of flexibility is zero (the inflexible type). | `summary` | 2026-10-21 |
+| 25 | **Mean \|Δᵏ_t\|** in `summary` averages over every hour of the window, not only the layer's hours 𝒲ᵏ, so the investment wedge is diluted by 1/T. | `summary` | 2026-10-21 |
+| 26 | **Table 4's learned belief** is not produced; the learner is deleted (#21). Tables 3 and 4 run the walkthrough's one type and window over α ∈ {1, 5, 10, 20%} in both markets. | `notebooks/walkthrough.py` | 2026-10-21 |

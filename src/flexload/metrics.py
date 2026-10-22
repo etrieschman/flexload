@@ -9,6 +9,7 @@ alignment Δᵏ_t, recovery ρᵏ, fairness.
 from __future__ import annotations
 
 from itertools import product
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -67,15 +68,16 @@ def respond(
     market: Market,
     scenario: Scenario,
     belief: str = "exogenous",
-) -> tuple[Dispatch, Dispatch, Dispatch]:
+) -> tuple[Dispatch, Dispatch, Dispatch, list[float]]:
     """R: the load's response under its belief about prices, ``"exogenous"``
     (the clearing at (δ, 0), the posted rate, consumption as bid) or
     ``"consistent"`` (the fixed point, knowing its share, cut to dᶠⁱʳᵐ where
-    λ̃ is at VOLL). Returns the dispatch at the response, b0, and the belief
-    the bid answered to."""
+    λ̃ is at VOLL). Returns the dispatch at the response, b0, the belief the
+    bid answered to, and the fixed point's bid changes (empty when exogenous)."""
     delta, T = scenario.delta, scenario.T
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
     b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
+    history: list[float] = []
     if belief == "exogenous":
         d_bid, sigma_bid = best_response(
             theta,
@@ -90,10 +92,10 @@ def respond(
         )
         dispatch, believed = market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0
     elif belief == "consistent":
-        _, _, dispatch, believed, _ = fixed_point(theta, tariff, market, scenario)
+        _, _, dispatch, believed, history = fixed_point(theta, tariff, market, scenario)
     else:
         raise ValueError(belief)
-    return dispatch, b0, believed
+    return dispatch, b0, believed, history
 
 
 def summary(
@@ -104,26 +106,33 @@ def summary(
     belief: str = "exogenous",
     b1: tuple | None = None,
 ) -> dict:
-    """One row: welfare at B0, B1 and R, efficiency, the bill by layer, recovery,
-    fairness, and the belief's price error. ``b1`` is the bid ``(d_bid, σ_bid)``
-    from ``planner`` if already solved. S is read from a clearing at each of
-    the three bids."""
-    dispatch, b0, believed = respond(theta, tariff, market, scenario, belief)
+    """One row: welfare at B0, B1 and R, efficiency and its share of the value
+    of flexibility, the bill by layer at B0 and at R, mean |Δᵏ_t|, recovery,
+    fairness, the belief's price error, and the fixed point's iterations and
+    last change. ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if
+    already solved. S is read from a clearing at each of the three bids."""
+    dispatch, b0, believed, history = respond(theta, tariff, market, scenario, belief)
     d1, s1 = planner(theta, market, scenario) if b1 is None else b1
     planned = market.clear(scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta))
-    bill = settle(tariff, scenario, dispatch, b0, own=True)
+    bill, bill_b0 = settle(tariff, scenario, dispatch, b0), settle(tariff, scenario, b0, b0)
     rho = recovery(tariff, scenario, dispatch, b0)
     fair = fairness(tariff, scenario, dispatch, planned, b0)
+    wedge = dict(alignment(tariff, market, scenario, dispatch, b0).group_by("layer").agg(pl.col("wedge").abs().mean()).iter_rows())
     S_B0, S_R, S_B1 = (
         float(S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.Pi).value)
         for x in (b0, dispatch, planned)
     )
+    value = S_B1 - S_B0
     return {
         "tariff": tariff.name, "type": theta.name, "market": market.reserve, "belief": belief, "start": scenario.start,
-        "S_B0": S_B0, "S_B1": S_B1, "S_R": S_R, "efficiency": S_B1 - S_R, "value_of_flexibility": S_B1 - S_B0,
+        "S_B0": S_B0, "S_B1": S_B1, "S_R": S_R, "efficiency": S_B1 - S_R, "value_of_flexibility": value,
+        "efficiency_share": (S_B1 - S_R) / value if value > 1e-9 else None,
         **{f"bill_{k}": v for k, v in bill.items()}, "bill_total": sum(bill.values()),
+        **{f"bill_b0_{k}": v for k, v in bill_b0.items()},
+        **{f"alignment_{k}": float(wedge[k]) for k in LAYERS},
         **{f"recovery_{k}": v for k, v in rho.items()}, **{f"fairness_{k}": v for k, v in fair.items()},
         "price_error": float(np.abs(believed.lam - dispatch.lam).mean()),
+        "iterations": len(history) or None, "last_change": history[-1] if history else None,
     }
 
 
@@ -173,3 +182,35 @@ def choose(table: pl.DataFrame, rule: str = "maxmin_welfare", prior: dict[str, f
     else:
         raise ValueError(rule)
     return str(score.sort("score", descending=True)["tariff"][0])
+
+
+# ----------------------------------------------------------------------------
+# a table for the report
+# ----------------------------------------------------------------------------
+def tex(table: pl.DataFrame, path: str | Path, caption: str, label: str, digits: int = 0) -> None:
+    """Write ``table`` as a booktabs table for ``\\input``. Column names are the
+    headers, written as given; floats get ``digits`` decimals, integers none,
+    both thousands separators; nulls print as --."""
+
+    def cell(v) -> str:
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return "--"
+        if isinstance(v, float):
+            return f"{round(v, digits) or 0.0:,.{digits}f}"  # no −0
+        return f"{v:,d}" if isinstance(v, int) else str(v)
+
+    align = "".join("r" if dt.is_numeric() else "l" for dt in table.dtypes)
+    lines = [
+        r"\begin{table}[h]\centering\small",
+        rf"\begin{{tabular}}{{@{{}}{align}@{{}}}}",
+        r"\toprule",
+        " & ".join(table.columns) + r" \\",
+        r"\midrule",
+        *(" & ".join(cell(v) for v in row) + r" \\" for row in table.iter_rows()),
+        r"\bottomrule",
+        r"\end{tabular}",
+        rf"\caption{{{caption}}}",
+        rf"\label{{{label}}}",
+        r"\end{table}",
+    ]
+    Path(path).write_text("\n".join(lines) + "\n")
