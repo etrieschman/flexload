@@ -146,8 +146,34 @@ d_c, s_c, dispatch_c, believed, history = fp
 print(f"rounds [count]:\t{len(history)}")
 print(f"fixed-point time [s]:\t{time.time() - t0:.0f}")
 print(f"last change in the bid [MW]:\t{history[-1]:.2f}")
-S_R = float(fl.S(theta, market, scenario, dispatch.d, dispatch.sigma, dispatch.u, dispatch.r, dispatch.shed, dispatch.y, dispatch.Pi).value)
-S_R_c = float(fl.S(theta, market, scenario, dispatch_c.d, dispatch_c.sigma, dispatch_c.u, dispatch_c.r, dispatch_c.shed, dispatch_c.y, dispatch_c.Pi).value)
+S_R = float(
+    fl.S(
+        theta,
+        market,
+        scenario,
+        dispatch.d,
+        dispatch.sigma,
+        dispatch.u,
+        dispatch.r,
+        dispatch.shed,
+        dispatch.y,
+        dispatch.Pi,
+    ).value
+)
+S_R_c = float(
+    fl.S(
+        theta,
+        market,
+        scenario,
+        dispatch_c.d,
+        dispatch_c.sigma,
+        dispatch_c.u,
+        dispatch_c.r,
+        dispatch_c.shed,
+        dispatch_c.y,
+        dispatch_c.Pi,
+    ).value
+)
 print(f"welfare at R, exogenous belief [$]:\t{S_R:,.0f}")
 print(f"welfare at R, consistent belief [$]:\t{S_R_c:,.0f}")
 print(f"welfare at B1 [$]:\t{row['S_B1']:,.0f}")
@@ -210,8 +236,16 @@ percent = lambda col: (pl.col(col) * 100).round().cast(pl.Int64)  # noqa: E731
 # benchmarks for every type; under the consistent belief each row is a fixed point.
 print("\nTable 1: response to tau_0 by type and belief (RQ1a)")
 t0 = time.time()
-rows = pl.concat([fl.table(types, fl.named_tariffs(scenario), [market], [scenario], b) for b in BELIEFS], how="vertical_relaxed")
-rows = rows.with_columns(pl.col("type").cast(pl.Enum(list(types))), pl.col("belief").cast(pl.Enum(BELIEFS)))
+rows = pl.concat(
+    [
+        fl.table(types, fl.named_tariffs(scenario), [market], [scenario], b)
+        for b in BELIEFS
+    ],
+    how="vertical_relaxed",
+)
+rows = rows.with_columns(
+    pl.col("type").cast(pl.Enum(list(types))), pl.col("belief").cast(pl.Enum(BELIEFS))
+)
 print(f"time [s]:\t{time.time() - t0:.0f}")
 table_1 = rows.sort("type", "belief").select(
     "type",
@@ -219,10 +253,21 @@ table_1 = rows.sort("type", "belief").select(
     (pl.col("value_of_flexibility") / K).alias(r"$S^{B1} - S^{B0}$ [k\$]"),
     (pl.col("efficiency") / K).alias(r"$S^{B1} - S^{R}$ [k\$]"),
     percent("efficiency_share").alias(r"share [\%]"),
-    *[((pl.col(f"bill_{k}") - pl.col(f"bill_b0_{k}")) / K).alias(rf"$\Delta B^{{\rm {s}}}$ [k\$]") for k, s in zip((*fl.LAYERS, "credit"), ("energy", "res", "inv", "credit"))],
+    *[
+        ((pl.col(f"bill_{k}") - pl.col(f"bill_b0_{k}")) / K).alias(
+            rf"$\Delta B^{{\rm {s}}}$ [k\$]"
+        )
+        for k, s in zip((*fl.LAYERS, "credit"), ("energy", "res", "inv", "credit"))
+    ],
 )
 print(table_1)
-fl.tex(table_1, tables / "table_1.tex", "Response to $\\tau_0$ by type and belief: the value of flexibility, efficiency, and the bill change from B0 to R by layer.", "tab:rq1a", digits=1)
+fl.tex(
+    table_1,
+    tables / "table_1.tex",
+    "Response to $\\tau_0$ by type and belief: the value of flexibility, efficiency, and the bill change from B0 to R by layer.",
+    "tab:rq1a",
+    digits=1,
+)
 
 # %%
 # Table 2 (RQ1a, b). One row per type and layer under the exogenous belief:
@@ -243,7 +288,13 @@ table_2 = pl.concat(
     ]
 )
 print(table_2)
-fl.tex(table_2, tables / "table_2.tex", "Alignment, recovery and fairness under $\\tau_0$ by type and layer, exogenous price-taker.", "tab:rq1b", digits=1)
+fl.tex(
+    table_2,
+    tables / "table_2.tex",
+    "Alignment, recovery and fairness under $\\tau_0$ by type and layer, exogenous price-taker.",
+    "tab:rq1b",
+    digits=1,
+)
 
 # %%
 # Tables 3 and 4 (RQ3). The walkthrough's type at four sizes alpha in both
@@ -261,7 +312,10 @@ for alpha in ALPHAS:
     tau_alpha = fl.named_tariffs(window)["tau_0"]
     for m in markets:
         b1 = fl.planner(theta, m, window)
-        grid += [{"alpha": alpha, **fl.summary(theta, tau_alpha, m, window, b, b1)} for b in BELIEFS]
+        grid += [
+            {"alpha": alpha, **fl.summary(theta, tau_alpha, m, window, b, b1)}
+            for b in BELIEFS
+        ]
 grid = pl.DataFrame(grid).with_columns(pl.col("market").cast(pl.Enum(["pjm", "ercot"])))
 print(f"time [s]:\t{time.time() - t0:.0f}")
 
@@ -270,31 +324,55 @@ print(f"time [s]:\t{time.time() - t0:.0f}")
 # as a share of the value of flexibility, mean |reserve wedge|, and fairness
 # summed over layers.
 print("\nTable 3: alignment and fairness by load size and market (RQ3a)")
-table_3 = grid.filter(pl.col("belief") == "exogenous").sort("alpha", "market").select(
-    percent("alpha").alias(r"$\alpha$ [\%]"),
-    "market",
-    percent("efficiency_share").alias(r"efficiency share [\%]"),
-    pl.col("alignment_reserve").alias(r"mean $|\Delta^{\rm res}_t|$ [\$/MWh]"),
-    (pl.sum_horizontal([pl.col(f"fairness_{k}") for k in fl.LAYERS]) / K).alias(r"fairness [k\$]"),
+table_3 = (
+    grid.filter(pl.col("belief") == "exogenous")
+    .sort("alpha", "market")
+    .select(
+        percent("alpha").alias(r"$\alpha$ [\%]"),
+        "market",
+        percent("efficiency_share").alias(r"efficiency share [\%]"),
+        pl.col("alignment_reserve").alias(r"mean $|\Delta^{\rm res}_t|$ [\$/MWh]"),
+        (pl.sum_horizontal([pl.col(f"fairness_{k}") for k in fl.LAYERS]) / K).alias(
+            r"fairness [k\$]"
+        ),
+    )
 )
 print(table_3)
-fl.tex(table_3, tables / "table_3.tex", "Load size by market under $\\tau_0$: efficiency as a share of the value of flexibility, the reserve wedge, and fairness.", "tab:rq3a", digits=1)
+fl.tex(
+    table_3,
+    tables / "table_3.tex",
+    "Load size by market under $\\tau_0$: efficiency as a share of the value of flexibility, the reserve wedge, and fairness.",
+    "tab:rq3a",
+    digits=1,
+)
 
 # %%
 # Table 4 (RQ3b). Rows: alpha by market. Columns: the fixed point's rounds and
 # last change, S_R under each belief, and each belief's mean price error.
 print("\nTable 4: beliefs by load size and market (RQ3b)")
 exogenous, consistent = (grid.filter(pl.col("belief") == b) for b in BELIEFS)
-table_4 = exogenous.join(consistent, on=["alpha", "market"], suffix="_c").sort("alpha", "market").select(
-    percent("alpha").alias(r"$\alpha$ [\%]"),
-    "market",
-    pl.col("iterations_c").alias("rounds"),
-    pl.col("last_change_c").alias("last change [MW]"),
-    (pl.col("S_R") / K).alias(r"$S^R$ exogenous [k\$]"),
-    (pl.col("S_R_c") / K).alias(r"$S^R$ consistent [k\$]"),
-    pl.col("price_error").alias(r"price error, exogenous [\$/MWh]"),
-    pl.col("price_error_c").alias(r"price error, consistent [\$/MWh]"),
+table_4 = (
+    exogenous.join(consistent, on=["alpha", "market"], suffix="_c")
+    .sort("alpha", "market")
+    .select(
+        percent("alpha").alias(r"$\alpha$ [\%]"),
+        "market",
+        pl.col("iterations_c").alias("rounds"),
+        pl.col("last_change_c").alias("last change [MW]"),
+        (pl.col("S_R") / K).alias(r"$S^R$ exogenous [k\$]"),
+        (pl.col("S_R_c") / K).alias(r"$S^R$ consistent [k\$]"),
+        pl.col("price_error").alias(r"price error, exogenous [\$/MWh]"),
+        pl.col("price_error_c").alias(r"price error, consistent [\$/MWh]"),
+    )
 )
 print(table_4)
-fl.tex(table_4, tables / "table_4.tex", "Price-taking beliefs by load size and market under $\\tau_0$: convergence of the fixed point, welfare, and price error.", "tab:rq3b", digits=1)
+fl.tex(
+    table_4,
+    tables / "table_4.tex",
+    "Price-taking beliefs by load size and market under $\\tau_0$: convergence of the fixed point, welfare, and price error.",
+    "tab:rq3b",
+    digits=1,
+)
 print(f"tables saved to:\t{tables}")
+
+# %%
