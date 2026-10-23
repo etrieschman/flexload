@@ -34,23 +34,23 @@ def small_scenario(T, delta):
 
 
 def test_best_response_first_order_condition_elastic():
-    T, psi = 4, 1.0
+    T, psi = 4, 100.0
     delta, lam = np.full(T, 50.0), np.array([10.0, 20.0, 30.0, 40.0])
     theta = LoadType(psi, 0.5, np.zeros((0, T)), 0.0)
     b = posted(lam, np.zeros(T), delta)
     d, sigma = best_response(theta, energy_only(T), small_scenario(T, delta), Belief(b, False), b)
-    assert np.allclose(d, delta - lam / (2 * psi), atol=1e-4)  # max −ψ(d−δ)² − λd → d = δ − λ/2ψ
+    assert np.allclose(d, delta * (1 - lam / (2 * psi)), atol=1e-4)  # max −(ψ/δ)(d−δ)² − λd → d = δ(1 − λ/2ψ)
     assert np.allclose(sigma, 0.0)
 
 
 def test_best_response_conserves_energy_over_the_period():
-    T, psi = 4, 1.0
+    T, psi = 4, 100.0
     delta, lam = np.full(T, 50.0), np.array([10.0, 20.0, 30.0, 40.0])
     theta = LoadType(psi, 0.5, np.ones((1, T)), 0.0)
     b = posted(lam, np.zeros(T), delta)
     d, _ = best_response(theta, energy_only(T), small_scenario(T, delta), Belief(b, False), b)
     assert np.isclose(d.sum(), delta.sum(), atol=1e-4)
-    assert np.allclose(d, delta - (lam - lam.mean()) / (2 * psi), atol=1e-4)
+    assert np.allclose(d, delta * (1 - (lam - lam.mean()) / (2 * psi)), atol=1e-4)
 
 
 def test_tolerance_binds():
@@ -65,8 +65,8 @@ def test_tolerance_binds():
 def test_reserve_offer_where_price_beats_cost():
     T = 4
     delta = np.full(T, 50.0)
-    theta = LoadType(1.0, 0.2, np.zeros((0, T)), 0.05, sells_reserve=True)
-    assert np.allclose(c_sigma(theta, delta), 1.0)  # 2 · .05 · 1 · .2 · 50
+    theta = LoadType(50.0, 0.2, np.zeros((0, T)), 0.05, sells_reserve=True)
+    assert np.allclose(c_sigma(theta, delta), 1.0)  # 2 · .05 · 50 · .2, a rate in $/MWh
     mu = np.array([0.0, 0.5, 2.0, 5.0])
     b = posted(np.zeros(T), mu, delta)
     d, sigma = best_response(theta, energy_only(T), small_scenario(T, delta), Belief(b, False), b)

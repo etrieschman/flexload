@@ -35,7 +35,7 @@ nothing else. Aligned 2026-10-21. Private repo.
 | C_sys (the one cost formula: dispatch objective, planner, S), ∂C_sys/∂dₜ by layer | `market.C_sys(scenario, u, r, sigma, c_sigma, shed, y, Pi)`; `market.marginal_cost(dispatch)` | `system.py` |
 | θ = (ψ, β, A, p, 𝕀{sells reserve}, 𝕀{curtailable}); dᶠⁱʳᵐ = (1−β) minₜ δₜ | `LoadType(psi, beta, A, p, sells_reserve, curtailable)`; `theta.d_firm(delta)` (a level; None if not curtailable) | `load.py` |
 | A ∈ {1ᵀ, 0, I}; θ₀…θ₄ as a data center or a bitcoin mine | `np.ones((1, T))`, `np.zeros((0, T))`, `np.eye(T)` in `named_types(T, business)` with `PSI`, `BETA`, `P`, `BUSINESS` | `load.py` |
-| c^σₜ = 2pψβδₜ; V(d, σ); 𝒟_θ | `c_sigma`, `V`, `feasible` | `load.py` |
+| V = −Σₜ (ψ/δₜ)(dₜ − δₜ)² − c^σᵀσ, value per MW of load, ψ in $/MWh (2026-10-23; was −ψ‖d − δ‖²); c^σ = 2pψβ, a rate; 𝒟_θ | `V`, `c_sigma`, `feasible` | `load.py` |
 | 𝓜̃, a price-taker's belief: a dispatch and the Table 2 row | `Belief(dispatch, consistent)`; `consistent=False` is the exogenous price-taker, `True` the consistent one | `load.py` |
 | the load's objective under a belief 𝓜̃ | `payoff(theta, tariff, scenario, belief, b0, d, sigma)` = V − B on the expected (d̃, σ̃); `b0` holds the ex-ante pools under every belief | `load.py` |
 | R (QP) | `best_response(theta, tariff, scenario, belief, b0) -> (d_bid, sigma_bid)`; builds the tildes: σ̃ = σ_bid, constrained to 0 where μ̃ < c^σ; d̃ = dᶠⁱʳᵐ where the believed dispatch cut the load, if consistent | `load.py` |
@@ -94,6 +94,15 @@ Imports run one way: system ← tariff ← load ← metrics.
 
 ## Status (2026-10-23)
 
+- 2026-10-23, later: **V is per MW of load**, V = −Σₜ (ψ/δₜ)(dₜ − δₜ)², ψ in $/MWh
+  (PSI = 50, 100, 200): the planner's cut is λ/2ψ as a fraction of δ, so the value of
+  flexibility scales with α and the load moves on ordinary price swings. Before, the
+  cut was λ/2ψ in MW whatever the size, the value of flexibility was the same at
+  every α, and nothing moved outside the scarcity hour. c^σ = 2pψβ is a constant rate.
+- 2026-10-23, later: the base window is **week 32** (the year's tightest hour; 12 of
+  ERCOT's 56 scarcity hours at the 15% margin; week 31 had one). `tex` writes the
+  tabular only; the document owns caption and label. `notebooks/deliverableI.py`
+  copies figures and tables to `FLEXLOAD_OUT` (`.env`, gitignored).
 - 2026-10-23: `Belief(dispatch, consistent)` replaces the flag beside the dispatch;
   `payoff` is V − B on the expected outcome and `best_response` builds the tildes;
   the σ clip moved from the QPs into `clear`. 36 tests pass.

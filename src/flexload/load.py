@@ -36,7 +36,7 @@ class LoadType:
     costs more than VOLL, unpaid, in exchange for its connection. A load sells
     reserve or is curtailable, never both: a MW is headroom or σ."""
 
-    psi: float  # weight on following δ, $/MW²h
+    psi: float  # the loss rate, $/MWh: cutting a fraction x of δ_t costs 2ψx per MWh cut
     beta: float  # tolerated deviation as a fraction of δ
     A: np.ndarray  # (M, T) energy-conservation blocks
     p: float  # believed probability that offered reserve is called
@@ -58,7 +58,7 @@ class LoadType:
 
 
 # Placeholder parameter levels (docs/assumptions.md #16).
-PSI = {"low": 0.5, "medium": 1.0, "high": 2.0}  # $/MW²h
+PSI = {"low": 50.0, "medium": 100.0, "high": 200.0}  # $/MWh; a price of 2βψ pushes the load to its band
 BETA = {"low": 0.05, "medium": 0.2, "high": 0.5}
 P = {"low": 0.02, "high": 0.2}
 BUSINESS = {  # (ψ, β, A): what the load is, behind its designation
@@ -119,14 +119,18 @@ def named_types(T: int, business: str = "data_center_train") -> dict[str, LoadTy
 # V, c^σ, 𝒟_θ, S
 # ----------------------------------------------------------------------------
 def c_sigma(theta: LoadType, delta: np.ndarray) -> np.ndarray:
-    """c^σ_t = 2 p ψ β δ_t, the cost of standing ready: the marginal loss at the
-    largest shed the load tolerates, times the chance p it is called."""
-    return 2.0 * theta.p * theta.psi * theta.beta * delta
+    """c^σ = 2 p ψ β, the cost of standing ready: the marginal loss at the
+    band's edge, the largest shed the load tolerates, times the chance p it is
+    called. A rate in $/MWh, the same in every hour."""
+    return np.full(delta.shape, 2.0 * theta.p * theta.psi * theta.beta)
 
 
 def V(theta: LoadType, delta: np.ndarray, d, sigma):
-    """V(d, σ) = −ψ‖d − δ‖² − c^σᵀσ, on what the load consumes and what cleared."""
-    return -theta.psi * cp.sum_squares(d - delta) - cp.sum(
+    """V(d, σ) = −Σ_t (ψ/δ_t)(d_t − δ_t)² − c^σᵀσ, on what the load consumes and
+    what cleared. Value is per MW of load: with x_t = (δ_t − d_t)/δ_t the loss is
+    ψ δ_t x_t², so a load twice the size loses twice as much from the same
+    fractional cut, and the planner's cut λ_t/2ψ is a fraction of δ_t."""
+    return -cp.sum(cp.multiply(theta.psi / delta, cp.square(d - delta))) - cp.sum(
         cp.multiply(c_sigma(theta, delta), sigma)
     )
 

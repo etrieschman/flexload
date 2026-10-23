@@ -115,7 +115,7 @@ A reserve seller's marginal incentive to offer $\sigma$, which is $\mu_t$, is no
 | input | status |
 |---|---|
 | investment cost by RTS-GMLC category, \$/kW-yr: nuclear 600, coal 350, gas CC 110, gas CT 80, oil ST 300, hydro 300, wind 140, solar PV 90 | placeholder; RTS-GMLC reports no capital cost |
-| $\psi \in \{0.5, 1, 2\}$ \$/MW²h, $\beta \in \{0.05, 0.2, 0.5\}$, $p \in \{0.02, 0.2\}$ | placeholder levels for the named types |
+| $\psi \in \{50, 100, 200\}$ \$/MWh, $\beta \in \{0.05, 0.2, 0.5\}$, $p \in \{0.02, 0.2\}$ | placeholder levels for the named types; $V = -\sum_t (\psi/\delta_t)(d_t - \delta_t)^2$, value per MW of load, so the cut $\lambda_t/2\psi$ is a fraction of $\delta_t$ |
 | $\gamma = 0.03$, $c^{\rm VOLL} = 5{,}000$ \$/MWh | values above; neither is cited yet |
 
 ## Solver

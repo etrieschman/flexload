@@ -2,22 +2,28 @@
 # # Deliverable I: the figures and tables of the Workshop I report (§4)
 #
 # Every exhibit sits at the base configuration and moves at most two dimensions.
-# Base: ERCOT, week 31, α = 5%, training data center, exogenous price-taker, τ₀.
+# Base: ERCOT, week 32, α = 5%, training data center, exogenous price-taker, τ₀.
+# Week 32 holds the year's tightest hour, where the reserve margin is set, and
+# 12 of ERCOT's 56 scarcity hours (week 29 has 21; week 31 has one).
 #
 # | exhibit | moves | question |
 # |---|---|---|
 # | Figure 0 | week | the market: the supply stack and the pools by week under B0 |
-# | Figure 1 | market, business | week 31: λ and consumption at B0, R and B1 |
+# | Figure 1 | market, business | the window: λ and consumption at B0, R and B1 |
 # | Table 1 | market, type, business | RQ1a: value of flexibility, efficiency, bill change by layer |
 # | Table 2 | market, type, business, layer | RQ1a, b: alignment, recovery at R and B1, fairness |
-# | Figure 2 | α, market, business | RQ3a: price error, efficiency share, fairness against load size |
+# | Figure 2 | α, market, business | RQ3a: efficiency and fairness against load size |
 # | Table 3 | α, market | RQ3b: the consistent price-taker's fixed point, training data center |
 #
 # Beliefs move only in Table 3 (RQ4 is about beliefs). Run as a script,
 # `uv run python notebooks/deliverableI.py`, or cell by cell. Figures go to
-# `notebooks/figures`, tables to `notebooks/tables` as booktabs for `\input`.
+# `notebooks/figures`, tables to `notebooks/tables` as booktabs for `\input`;
+# with `FLEXLOAD_OUT` set (in the environment or in `.env` at the repo root)
+# each .png and .tex is also copied there, flat, for the Overleaf project.
 
 # %%
+import os
+import shutil
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -41,7 +47,7 @@ np.set_printoptions(precision=1, suppress=True, linewidth=140)
 # %%
 # Settings: the base configuration and the dimensions each exhibit moves.
 T = 168
-WEEK = 31
+WEEK = 32  # the window: the year's tightest hour is in it
 ALPHA = 0.05
 RESERVE_MARGIN = 0.15
 TYPE = "mover"  # the type Figures 1 and 2 and Table 3 follow
@@ -55,6 +61,23 @@ here = Path(__file__).parent if "__file__" in globals() else Path(".")
 figures, tables = here / "figures", here / "tables"
 figures.mkdir(exist_ok=True)
 tables.mkdir(exist_ok=True)
+dotenv = here.parent / ".env"
+if dotenv.exists():  # KEY=VALUE lines; the environment wins
+    for line in dotenv.read_text().splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+OUT = Path(os.environ["FLEXLOAD_OUT"]).expanduser() if os.environ.get("FLEXLOAD_OUT") else None
+
+
+def publish(path: Path) -> None:
+    """Copy a saved figure or table to FLEXLOAD_OUT, if set."""
+    if OUT is not None:
+        OUT.mkdir(parents=True, exist_ok=True)
+        shutil.copy(path, OUT / path.name)
+    print(f"saved:\t{path}" + (f"\t-> {OUT / path.name}" if OUT else ""))
+
+
 percent = lambda col: (pl.col(col) * 100).round().cast(pl.Int64)  # noqa: E731
 COLOR = {"ercot": "C3", "pjm": "C0", "data_center_train": "C1", "bitcoin_mine": "C2"}
 STYLE = {"B0": ":", "R": "-", "B1": "--"}
@@ -85,9 +108,11 @@ def label(df: pl.DataFrame) -> pl.DataFrame:
 # marginal cost, one bar per offer block, colored by fuel; renewables at their
 # average hour over the year, thermal units at nameplate; the year's average
 # and peak system load as vertical lines. Right: the energy and reserve pools
-# by week under B0 in each market, the window's share of the investment pool
-# as a flat line, and the week's own missing money (cost share less rents),
-# which is why the investment pool is annual.
+# and the window's share of the annual investment pool, Cⁱⁿᵛ T/8760, stacked by
+# week under B0 in each market. ERCOT's investment pool is zero at this margin:
+# the scarcity weeks' energy and reserve prices pay the fleet. PJM's hard
+# requirement never binds at this margin, so its reserve pool is zero and the
+# investment pool carries the fleet's cost.
 print("\nFigure 0: the supply stack and the pools by week under B0")
 t0 = time.time()
 avg_capacity = np.mean([w.capacity.mean(axis=1) for w in weeks], axis=0)
@@ -105,15 +130,12 @@ for m, mk in markets.items():
     rows = []
     for w in weeks:
         b0_w = mk.clear(w, w.delta, np.zeros(T), np.zeros(T))
-        rents = float((b0_w.nu.sum(axis=1) * w.nameplate).sum())
-        share = float((w.cost_inv * T / 8760 * w.nameplate).sum())
         rows.append(
             {
                 "week": w.start // T,
                 "energy": float(b0_w.C_energy.sum()),
                 "reserve": float(b0_w.C_res.sum()),
                 "investment": b0_w.C_inv,
-                "missing_money": share - rents,
             }
         )
     pools[m] = pl.DataFrame(rows)
@@ -137,23 +159,26 @@ ax[0].legend(handles, labels, fontsize=8, ncol=2)
 for a, m in zip(ax[1:], MARKETS):
     p = pools[m]
     a.bar(p["week"], p["energy"] / 1e6, label="energy pool", color="#bbbbbb")
-    a.bar(p["week"], p["reserve"] / 1e6, bottom=p["energy"] / 1e6, label="reserve pool", color=COLOR[m])
-    a.axhline(markets[m].C_inv * T / 8760 / 1e6, color="k", lw=1, label="investment pool, the window's share")
-    a.plot(p["week"], p["missing_money"] / 1e6, color="k", lw=1, ls="--", label="week's own missing money")
+    a.bar(p["week"], p["reserve"] / 1e6, bottom=p["energy"] / 1e6, label="reserve pool", color="#1f78b4")
+    a.bar(p["week"], p["investment"] / 1e6, bottom=(p["energy"] + p["reserve"]) / 1e6,
+          label=r"investment pool, the window's share $C^{inv}\,T/8760$", color="#444444")
     a.axvline(WEEK, color="k", lw=0.5, alpha=0.5)
-    a.set_title(f"pools by week under B0, {m.upper()}")
+    pool_week = markets[m].C_inv * T / 8760 / 1e6
+    a.set_title(f"pools by week under B0, {m.upper()}" + (" (investment pool = 0)" if pool_week < 0.5 else ""))
     a.set_xlabel("week of the year")
     a.set_ylabel("M$ per week")
-fig.legend(*ax[1].get_legend_handles_labels(), loc="lower center", ncol=4, fontsize=8, frameon=False)
+fig.legend(*ax[2].get_legend_handles_labels(), loc="lower center", ncol=3, fontsize=8, frameon=False)
 fig.tight_layout(rect=(0, 0.07, 1, 1))
 fig.savefig(figures / "figure_0_market.png", dpi=150)
-print(f"saved:\t{figures / 'figure_0_market.png'}")
+publish(figures / "figure_0_market.png")
 
 # %%
-# Figure 1, week 31. Rows: the energy price λ and the load's consumption.
+# Figure 1, the window. Rows: the energy price λ and the load's consumption.
 # Columns: the markets. Lines: B0 (dotted, black), R (solid) and B1 (dashed)
-# for the mover run as a training data center and as a bitcoin mine.
-print("\nFigure 1: week 31 at B0, R and B1 by market and business")
+# for the mover run as a training data center and as a bitcoin mine. λ is
+# clipped at 75 $/MWh (ERCOT's scarcity hours reach the thousands). The grey
+# line marks t*, the ex-ante peak hour where τ₀ bills the investment pool.
+print(f"\nFigure 1: week {WEEK} at B0, R and B1 by market and business")
 t0 = time.time()
 paths = {}
 for m, mk in markets.items():
@@ -170,31 +195,35 @@ print(f"time [s]:\t{time.time() - t0:.0f}")
 
 fig, ax = plt.subplots(2, 2, figsize=(13, 7), sharex=True, sharey="row")
 for j, m in enumerate(MARKETS):
-    ax[0, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"])
-    ax[1, j].plot(scenario.delta, color="k", ls=STYLE["B0"])
+    ax[0, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"], lw=1.2)
+    ax[1, j].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=1.2)
     for b in BUSINESSES:
         for path in ("R", "B1"):
             x = paths[m, path, b]
-            ax[0, j].plot(x.lam, color=COLOR[b], ls=STYLE[path], alpha=0.85)
-            ax[1, j].plot(x.d, color=COLOR[b], ls=STYLE[path], alpha=0.85)
+            ax[0, j].plot(x.lam, color=COLOR[b], ls=STYLE[path], lw=0.9, alpha=0.6)
+            ax[1, j].plot(x.d, color=COLOR[b], ls=STYLE[path], lw=0.9, alpha=0.6)
+    for a in ax[:, j]:
+        a.axvline(scenario.peak, color="grey", lw=0.8)
     ax[0, j].set_title(m.upper())
-    ax[1, j].set_xlabel("hour of week 31")
-ax[0, 0].set_ylabel("energy price λ [$/MWh]")
+    ax[1, j].set_xlabel(f"hour of week {WEEK}")
+ax[0, 0].set_ylim(0, 75)
+ax[0, 0].set_ylabel("energy price λ [$/MWh], clipped at 75")
 ax[1, 0].set_ylabel("the load's consumption [MW]")
 legend = [Line2D([], [], color="k", ls=STYLE["B0"], label="B0 (λ at B0; δ)")]
 legend += [Line2D([], [], color=COLOR[b], label=name) for b, name in BUSINESSES.items()]
 legend += [Line2D([], [], color="k", ls=STYLE[p], label=p) for p in ("R", "B1")]
+legend += [Line2D([], [], color="grey", lw=0.8, label=f"t* = {scenario.peak}, the ex-ante peak hour")]
 ax[0, 1].legend(handles=legend, fontsize=8)
 fig.tight_layout()
 fig.savefig(figures / f"figure_1_week{WEEK}.png", dpi=150)
-print(f"saved:\t{figures / f'figure_1_week{WEEK}.png'}")
+publish(figures / f"figure_1_week{WEEK}.png")
 
 # %%
 # The operator's table at the base configuration: every type under each
-# business in both markets, week 31, exogenous belief. Tables 1 and 2 read from
+# business in both markets, the window, exogenous belief. Tables 1 and 2 read from
 # it. Under ERCOT the investment pool is zero at this margin (rents pay the
 # fleet), so its investment columns are zero; PJM carries the layer.
-print("\nThe operator's table: market × type × business under tau_0, week 31")
+print(f"\nThe operator's table: market × type × business under tau_0, week {WEEK}")
 t0 = time.time()
 rows = pl.concat(
     [
@@ -234,13 +263,8 @@ table_1 = label(rows.sort("market", "type", "business")).select(
     ],
 )
 print(table_1)
-fl.tex(
-    table_1,
-    tables / "table_1.tex",
-    "Response to $\\tau_0$ by market, type and business, week 31, exogenous price-taker: the value of flexibility, efficiency, and the bill change from B0 to R by layer. ERCOT's investment pool is zero at this margin.",
-    "tab:rq1a",
-    digits=1,
-)
+fl.tex(table_1, tables / "table_1.tex", digits=1)
+publish(tables / "table_1.tex")
 
 # %%
 # Table 2 (RQ1a, b). Rows: market × type × business × layer, reserve and
@@ -268,13 +292,8 @@ table_2 = pl.concat(
     ]
 ).sort("market", "type", "business", "layer")
 print(table_2)
-fl.tex(
-    table_2,
-    tables / "table_2.tex",
-    "Alignment, recovery and fairness under $\\tau_0$ by market, type, business and layer, week 31, exogenous price-taker. The energy layer is at the margin and omitted; ERCOT's investment pool is zero at this margin.",
-    "tab:rq1b",
-    digits=1,
-)
+fl.tex(table_2, tables / "table_2.tex", digits=1)
+publish(tables / "table_2.tex")
 
 # %%
 # Load size. The mover at four sizes α in both markets under each business,
@@ -300,19 +319,18 @@ grid.write_csv(tables / "rows_alpha.csv")
 cycle.write_csv(tables / "rows_alpha_consistent.csv")
 
 # %%
-# Figure 2 (RQ3a). α against the belief's price error, efficiency S^B1 − S^R,
-# and fairness summed over layers. Color: market. Line style: business.
+# Figure 2 (RQ3a). α against efficiency S^B1 − S^R and fairness summed over
+# layers. Color: market. Line style: business.
 # Efficiency is in k$, not as a share: under PJM the value of flexibility is
 # near zero at every α, so the share is in the hundreds and says nothing.
 print("\nFigure 2: load size against price error, efficiency share and fairness (RQ3a)")
 BUSINESS_STYLE = dict(zip(BUSINESSES, ("-", "--")))
 panels = (
-    ("price_error", r"mean $|\tilde\lambda_t - \lambda_t|$ [\$/MWh]", 1.0),
     ("efficiency", r"efficiency $S^{B1} - S^R$ [k\$]", K),
     ("fairness_total", r"fairness, all layers [k\$]", K),
 )
 grid = grid.with_columns(pl.sum_horizontal([pl.col(f"fairness_{k}") for k in fl.LAYERS]).alias("fairness_total"))
-fig, ax = plt.subplots(1, 3, figsize=(14, 4))
+fig, ax = plt.subplots(1, 2, figsize=(10, 4))
 for a, (col, name, scale) in zip(ax, panels):
     for m in MARKETS:
         for b in BUSINESSES:
@@ -326,7 +344,7 @@ legend += [Line2D([], [], color="k", ls=BUSINESS_STYLE[b], label=n) for b, n in 
 ax[0].legend(handles=legend, fontsize=8)
 fig.tight_layout()
 fig.savefig(figures / "figure_2_alpha.png", dpi=150)
-print(f"saved:\t{figures / 'figure_2_alpha.png'}")
+publish(figures / "figure_2_alpha.png")
 
 # %%
 # Table 3 (RQ3b). Rows: α by market, the training data center. Columns: the
@@ -349,12 +367,5 @@ table_3 = (
     )
 )
 print(table_3)
-fl.tex(
-    table_3,
-    tables / "table_3.tex",
-    "Price-taking beliefs by load size and market under $\\tau_0$, training data center: convergence of the fixed point, welfare, and price error.",
-    "tab:rq3b",
-    digits=1,
-)
-print(f"figures saved to:\t{figures}")
-print(f"tables saved to:\t{tables}")
+fl.tex(table_3, tables / "table_3.tex", digits=1)
+publish(tables / "table_3.tex")

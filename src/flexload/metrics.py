@@ -217,12 +217,11 @@ def table(
 # ----------------------------------------------------------------------------
 # a table for the report
 # ----------------------------------------------------------------------------
-def tex(
-    table: pl.DataFrame, path: str | Path, caption: str, label: str, digits: int = 0
-) -> None:
-    """Write ``table`` as a booktabs table for ``\\input``. Column names are the
-    headers, written as given; floats get ``digits`` decimals, integers none,
-    both thousands separators; nulls print as --."""
+def tex(table: pl.DataFrame, path: str | Path, digits: int = 0) -> None:
+    """Write ``table`` as a booktabs ``tabular`` for ``\\input`` inside a table
+    environment the document controls. Column names are the headers, written as
+    given; floats get ``digits`` decimals, integers none, both thousands
+    separators; nulls print as --."""
 
     def cell(v) -> str:
         if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -233,7 +232,6 @@ def tex(
 
     align = "".join("r" if dt.is_numeric() else "l" for dt in table.dtypes)
     lines = [
-        r"\begin{table}[h]\centering\small",
         rf"\begin{{tabular}}{{@{{}}{align}@{{}}}}",
         r"\toprule",
         " & ".join(table.columns) + r" \\",
@@ -241,8 +239,5 @@ def tex(
         *(" & ".join(cell(v) for v in row) + r" \\" for row in table.iter_rows()),
         r"\bottomrule",
         r"\end{tabular}",
-        rf"\caption{{{caption}}}",
-        rf"\label{{{label}}}",
-        r"\end{table}",
     ]
     Path(path).write_text("\n".join(lines) + "\n")

@@ -11,3 +11,4 @@ build/
 notebooks/figures/
 notebooks/out/
 notebooks/tables/
+.env
