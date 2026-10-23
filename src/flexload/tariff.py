@@ -102,22 +102,19 @@ class TwoPart:
     phi: float = 0.0
     T: float | None = None
 
-    def rate(self, price):
-        return self.phi * np.asarray(price, float)
-
     def lump_sum(self, x_hat, x_other, pool, price) -> float:
         if self.T is not None:
             return self.T
-        residual = float(np.sum(pool - self.rate(price) * (x_hat + x_other)))
+        residual = float(np.sum(pool - self.phi * price * (x_hat + x_other)))
         return residual * float(np.sum(x_hat)) / float(np.sum(x_hat) + np.sum(x_other))
 
     def charge(self, x, x_hat, x_other, pool, price, knows_share: bool = False):
-        return cp.sum(cp.multiply(self.rate(price), x)) + self.lump_sum(
+        return cp.sum(cp.multiply(self.phi * price, x)) + self.lump_sum(
             x_hat, x_other, pool, price
         )
 
     def marginal(self, x, x_other, pool, price):
-        return self.rate(price)
+        return self.phi * price
 
 
 # ----------------------------------------------------------------------------
@@ -185,7 +182,7 @@ class Tariff:
         out = {}
         for k, form, pool, price in self._layers(realized, b0):
             x, x_hat, x_other = (
-                _base(form.hours, d),
+                cp.multiply(form.hours, d),
                 form.hours * d_hat,
                 form.hours * d_other,
             )
@@ -224,15 +221,6 @@ def _divide(a, b) -> np.ndarray:
     """a / b where b > 0, else 0: the hours outside a layer's window have no base and no cost."""
     a, b = np.asarray(a, float), np.asarray(b, float)
     return np.divide(a, b, out=np.zeros_like(b), where=b > 0)
-
-
-def _base(hours: np.ndarray, d):
-    """The consumption in the layer's hours, hours ∘ d: a number for a number, an expression for a variable."""
-    return cp.multiply(hours, d) if isinstance(d, cp.Expression) else hours * d
-
-
-def total(bill: dict):
-    return sum(bill.values())
 
 
 # ----------------------------------------------------------------------------

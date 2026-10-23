@@ -15,7 +15,7 @@ def belief(lam, mu, delta) -> Dispatch:
     T = lam.shape[0]
     z = np.zeros(T)
     return Dispatch(d=delta, sigma=z, u=np.zeros((1, T)), r=np.zeros((1, T)), shed=z, lam=lam, mu=mu, nu=np.zeros((1, T)), eta=z, Pi=z,
-                    C_energy=z, C_res=z, C_inv=0.0, d_bid=delta, sigma_bid=z, d_firm=delta, c_sigma=z, y=np.ones(1))
+                    C_energy=z, C_res=z, C_inv=0.0, d_bid=delta, sigma_bid=z, d_firm=delta, c_sigma=z, y=np.ones(1), curtailable=False)
 
 
 def welfare(theta, market, scenario, x) -> float:

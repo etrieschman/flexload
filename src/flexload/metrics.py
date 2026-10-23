@@ -72,24 +72,15 @@ def respond(
     """R: the load's response under its belief about prices, ``"exogenous"``
     (the clearing at (δ, 0), the posted rate, consumption as bid) or
     ``"consistent"`` (the fixed point, knowing its share, cut to dᶠⁱʳᵐ where
-    λ̃ is at VOLL). Returns the dispatch at the response, b0, the belief the
-    bid answered to, and the fixed point's bid changes (empty when exogenous)."""
+    the last clearing cut it). Returns the dispatch at the response, b0, the
+    belief the bid answered to, and the fixed point's bid changes (empty when
+    exogenous)."""
     delta, T = scenario.delta, scenario.T
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
     b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
     history: list[float] = []
     if belief == "exogenous":
-        d_bid, sigma_bid = best_response(
-            theta,
-            tariff,
-            scenario,
-            b0,
-            b0,
-            d_hat=delta,
-            anticipate=False,
-            voll=market.voll,
-            knows_share=False,
-        )
+        d_bid, sigma_bid = best_response(theta, tariff, scenario, b0, b0)
         dispatch, believed = market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0
     elif belief == "consistent":
         _, _, dispatch, believed, history = fixed_point(theta, tariff, market, scenario)

@@ -18,7 +18,7 @@ import cvxpy as cp
 import numpy as np
 
 from .system import Dispatch, Market, Scenario
-from .tariff import Tariff, total
+from .tariff import Tariff
 
 
 # ----------------------------------------------------------------------------
@@ -61,27 +61,22 @@ PSI = {"low": 0.5, "medium": 1.0, "high": 2.0}  # $/MW²h
 BETA = {"low": 0.05, "medium": 0.2, "high": 0.5}
 P = {"low": 0.02, "high": 0.2}
 BUSINESS = {  # (ψ, β, A): what the load is, behind its designation
-    "data_center": (
-        "high",
-        "medium",
-        "window",
-    ),  # shifts batch jobs, keeps the day's compute
-    "bitcoin_mine": (
-        "low",
-        "high",
-        "elastic",
-    ),  # curtailed hashing is lost, not shifted
+    "data_center_infer": ("high", "medium", "day"),  # serves requests as they come; defers batch jobs within the day
+    "data_center_train": ("medium", "medium", "window"),  # checkpoints and resumes training jobs within the window
+    "bitcoin_mine": ("low", "high", "elastic"),  # curtailed hashing is lost, not shifted
 }
 
 
-def named_types(T: int, business: str = "data_center") -> dict[str, LoadType]:
-    """θ₀…θ₄ of the report's type table, run as a ``business``, ``"data_center"``
-    or ``"bitcoin_mine"``, which sets (ψ, β, A) for the rows that sweep them.
-    The emergency row is fixed at (ψ medium, β low, elastic, p high). A is one
-    of the report's three: 1ᵀ conserves energy over the window, 0 is elastic,
-    I is inflexible."""
+def named_types(T: int, business: str = "data_center_train") -> dict[str, LoadType]:
+    """θ₀…θ₄ of the report's type table, run as a ``business`` in ``BUSINESS``,
+    which sets (ψ, β, A) for the rows that sweep them. The three businesses
+    differ in A, the horizon over which consumption is conserved: a day for an
+    inference data center, the window for a training one, none for a bitcoin
+    mine. The emergency row is fixed at (ψ medium, β low, elastic, p high)."""
     psi, beta, a = BUSINESS[business]
     A = {"window": np.ones((1, T)), "elastic": np.zeros((0, T))}
+    if T % 24 == 0:  # the day blocks need whole days
+        A["day"] = np.kron(np.eye(T // 24), np.ones((1, 24)))
     return {
         "inflexible": LoadType(PSI[psi], 0.0, np.eye(T), 0.0, name="inflexible"),
         "mover": LoadType(PSI[psi], BETA[beta], A[a], 0.0, name="mover"),
@@ -158,24 +153,23 @@ def payoff(
     b0: Dispatch,
     d_bid,
     sigma_bid,
-    d_hat: np.ndarray,
-    anticipate: bool,
-    voll: float,
-    knows_share: bool,
+    consistent: bool,
 ):
-    """V(d̃, σ̃) − B(d̃, σ̃) under the belief, where the tildes are the load's
-    expectation of its own dispatch: σ̃ = σ_bid where μ̃ ≥ c^σ, else 0; and, if
-    a curtailable load anticipates curtailment, d̃ = dᶠⁱʳᵐ where λ̃ = c^VOLL,
-    else d_bid. The belief prices the bill; ``b0``, the dispatch at (δ, 0),
-    holds the ex-ante pools Ĉᵏ, fixed under every belief."""
+    """V(d̃, σ̃) − B(d̃, σ̃) under the belief, a dispatch, where the tildes are
+    the load's expectation of its own dispatch (report Table 2). Under every
+    belief σ̃ = σ_bid where μ̃ ≥ c^σ, else 0, and the ex-ante pools Ĉᵏ come
+    from ``b0``, the dispatch at (δ, 0). The exogenous price-taker consumes
+    its bid and takes the posted rate at x̂ = δ. The ``consistent`` one knows
+    its share, linearized at x̂, the bid its belief answered, and expects to be
+    cut to dᶠⁱʳᵐ where the believed dispatch cut it."""
     delta = scenario.delta
     sigma_tilde = sigma_bid
     if theta.sells_reserve:
         clears = (belief.mu >= c_sigma(theta, delta) - 1e-12).astype(float)
         sigma_tilde = cp.multiply(clears, sigma_bid)
     d_tilde = d_bid
-    if anticipate and theta.curtailable:
-        cut = (belief.lam >= voll - 1e-6).astype(float)
+    if consistent and theta.curtailable:
+        cut = (belief.d < belief.d_bid - 1e-9).astype(float)
         d_tilde = cp.multiply(1.0 - cut, d_bid) + cut * theta.d_firm(delta)
     bill = tariff.bill(
         d_tilde,
@@ -183,11 +177,11 @@ def payoff(
         belief,
         scenario.d_other,
         b0,
-        d_hat=d_hat,
+        d_hat=belief.d_bid,
         own=True,
-        knows_share=knows_share,
+        knows_share=consistent,
     )
-    return V(theta, delta, d_tilde, sigma_tilde) - total(bill)
+    return V(theta, delta, d_tilde, sigma_tilde) - sum(bill.values())
 
 
 def best_response(
@@ -196,22 +190,16 @@ def best_response(
     scenario: Scenario,
     belief: Dispatch,
     b0: Dispatch,
-    d_hat: np.ndarray | None = None,
-    anticipate: bool = False,
-    voll: float = np.inf,
-    knows_share: bool = False,
+    consistent: bool = False,
     solver: str = "GUROBI",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """max payoff over 𝒟_θ: a QP. ``b0`` is the dispatch at (δ, 0), the source
-    of ex-ante pools. ``d_hat`` is the consumption the bill is linearized at; it
-    defaults to the belief's. ``anticipate``: a curtailable load expects to be
-    cut to dᶠⁱʳᵐ where the believed λ is at ``voll``, c^VOLL. ``knows_share``:
-    the load knows its charge is its share of each pool (the consistent
-    price-taker); otherwise it takes the posted average rate. In the hours
-    where the believed μ is below c^σ the load offers zero. Returns the bid
+    """max payoff over 𝒟_θ: a QP. ``belief`` is the dispatch the load takes
+    prices from, ``b0`` the dispatch at (δ, 0), the source of ex-ante pools.
+    ``consistent`` picks the row of report Table 2: the exogenous price-taker
+    (False) or the consistent one (True), see ``payoff``. In the hours where
+    the believed μ is below c^σ the load offers zero. Returns the bid
     (d_bid, sigma_bid)."""
     T, delta = scenario.T, scenario.delta
-    d_hat = belief.d if d_hat is None else d_hat
     d_bid = cp.Variable(T)
     sigma_bid = cp.Variable(T) if theta.sells_reserve else np.zeros(T)
     cons = feasible(theta, delta, d_bid, sigma_bid)
@@ -227,10 +215,7 @@ def best_response(
         b0,
         d_bid,
         sigma_bid,
-        d_hat,
-        anticipate,
-        voll,
-        knows_share,
+        consistent,
     )
     problem = cp.Problem(cp.Maximize(objective), cons)
     problem.solve(solver=solver)
@@ -253,7 +238,7 @@ def fixed_point(
     """The consistent price-taker. Respond to the belief, clear at the response,
     make that the belief, repeat until the bid stops moving. It knows its own
     share, so each round also moves the tangent of its charge to the last bid,
-    and it expects curtailment where its believed λ is at c^VOLL.
+    and it expects curtailment where the last clearing cut it.
     Each step moves a fraction ``damping`` toward the new response; ``None`` is
     the harmonic step 1/(k+1), which averages out the two-cycles a step merit
     order produces at scarcity hours. Returns (d_bid, sigma_bid, the dispatch
@@ -266,15 +251,7 @@ def fixed_point(
     belief, d_prev, sigma_prev, history = b0, delta.copy(), np.zeros(T), []
     for k in range(max_iter):
         d_bid, sigma_bid = best_response(
-            theta,
-            tariff,
-            scenario,
-            belief,
-            b0,
-            d_hat=d_prev,
-            anticipate=True,
-            voll=market.voll,
-            knows_share=True,
+            theta, tariff, scenario, belief, b0, consistent=True
         )
         step = damping if damping is not None else 1.0 / (k + 1)
         d_bid = step * d_bid + (1 - step) * d_prev

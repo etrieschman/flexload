@@ -37,7 +37,7 @@ WEEK = 31  # the window shown: early August, in the scarcity weeks 28-35
 ALPHA = 0.05  # the load's size, its share of system load
 RESERVE_MARGIN = 0.15  # spare capacity at the year's tightest hour (the default)
 RESERVE = "ercot"  # "ercot" (demand curve) or "pjm" (hard requirement)
-BUSINESS = "data_center"  # or "bitcoin_mine": sets (psi, beta, A) of the swept types
+BUSINESS = "data_center_train"  # or "data_center_infer", "bitcoin_mine": sets (psi, beta, A) of the swept types
 TYPE = "mover"  # inflexible, mover, controllable, emergency, curtailable
 print(f"RTS-GMLC data folder:\t{rts.data_root()}")
 print(f"RTS-GMLC git ref:\t{rts.REF[:8]}")

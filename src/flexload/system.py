@@ -292,11 +292,8 @@ class Dispatch:
     d_firm: np.ndarray  # the firm level the operator may not curtail below
     c_sigma: np.ndarray  # the offer price c^σ
     y: np.ndarray  # (J,) capacity: nameplate in the short run, chosen in the long run
+    curtailable: bool  # the load declared a firm level, so d may sit below d_bid
     status: str = ""
-
-    @property
-    def curtailable(self) -> bool:
-        return bool(np.any(self.d_firm < self.d_bid - 1e-9))
 
 
 @dataclass(frozen=True)
@@ -461,6 +458,7 @@ class Market:
             d_firm=d_firm,
             c_sigma=np.asarray(c_sigma),
             y=_value(y),
+            curtailable=curtailable,
             status=problem.status,
         )
 
