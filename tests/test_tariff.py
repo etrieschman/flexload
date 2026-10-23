@@ -3,6 +3,8 @@ from prices and pools; the clearing is not involved."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from flexload.system import Dispatch
@@ -38,7 +40,7 @@ def test_energy_settles_at_lambda():
 def test_share_splits_the_pool_by_base():
     tau = Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak))
     own = values(tau.bill(d, sigma, dispatch(), d_other))
-    others = values(tau.bill(d_other, np.zeros(T), dispatch(), d, own=False))
+    others = values(tau.bill(d_other, np.zeros(T), dispatch(), d))
     assert np.isclose(own["reserve"] + others["reserve"], C_res.sum())
     assert np.isclose(own["investment"] + others["investment"], C_inv)
     assert np.isclose(own["investment"], C_inv * d[2] / (d[2] + d_other[2]))
@@ -47,7 +49,7 @@ def test_share_splits_the_pool_by_base():
 def test_two_part_collects_the_pool():
     tau = Tariff(Marginal(np.ones(T)), TwoPart(np.ones(T), phi=0.03), TwoPart(peak, phi=0.0))
     own = values(tau.bill(d, sigma, dispatch(), d_other))
-    others = values(tau.bill(d_other, np.zeros(T), dispatch(), d, own=False))
+    others = values(tau.bill(d_other, np.zeros(T), dispatch(), d))
     assert np.isclose(own["reserve"] + others["reserve"], C_res.sum())
     assert np.isclose(own["investment"] + others["investment"], C_inv)
     assert np.isclose(own["investment"], C_inv * d[2] / (d[2] + d_other[2]))  # lump sum apportioned by share of base
@@ -88,7 +90,8 @@ def test_exemption_applies_to_a_curtailable_load_only():
     tau = Tariff(Marginal(np.ones(T)), Share(np.ones(T)), Share(peak), exempt_curtailable=True)
     curtailable = dispatch(d_firm=0.8 * d)
     assert values(tau.bill(d, sigma, curtailable, d_other))["reserve"] == 0.0
-    assert values(tau.bill(d_other, np.zeros(T), curtailable, d, own=False))["reserve"] > 0.0
+    others = replace(tau, exempt_curtailable=False)  # as settle does for everyone else
+    assert values(others.bill(d_other, np.zeros(T), curtailable, d))["reserve"] > 0.0
     assert values(tau.bill(d, sigma, dispatch(), d_other))["reserve"] > 0.0
 
 

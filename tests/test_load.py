@@ -89,7 +89,8 @@ def test_welfare_ordering_B0_R_B1(pjm, small):
 
 def test_fixed_point_converges_within_one_merit_order_step(pjm, small):
     theta = named_types(small.T)["mover"]
-    d, sigma, dispatch, _, history = fixed_point(theta, named_tariffs(small)["tau_0"], pjm, small)
+    b0 = pjm.clear(small, small.delta, np.zeros(small.T), c_sigma(theta, small.delta))
+    d, sigma, dispatch, _, history = fixed_point(theta, named_tariffs(small)["tau_0"], pjm, small, b0)
     assert history[-1] < 1e-3
     assert np.isclose(d.sum(), small.delta.sum(), atol=1e-3)
 
@@ -99,7 +100,8 @@ def test_fixed_point_cycles_when_the_band_straddles_a_step(pjm, small):
     unit, λ flips between 20 and 50, and the map has no fixed point (memo, RQ3b)."""
     straddling = replace(small, d_other=small.d_other + np.array([0.0, 0.0, 0.0, 10.0]))
     theta = named_types(small.T)["mover"]
-    _, _, _, _, history = fixed_point(theta, named_tariffs(straddling)["tau_0"], pjm, straddling, max_iter=30)
+    b0 = pjm.clear(straddling, straddling.delta, np.zeros(straddling.T), c_sigma(theta, straddling.delta))
+    _, _, _, _, history = fixed_point(theta, named_tariffs(straddling)["tau_0"], pjm, straddling, b0, max_iter=30)
     assert history[-1] > 1e-3
 
 

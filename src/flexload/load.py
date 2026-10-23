@@ -192,7 +192,6 @@ def payoff(
         scenario.d_other,
         b0,
         d_hat=belief.dispatch.d_bid,
-        own=True,
         knows_share=belief.consistent,
     )
     return V(theta, scenario.delta, d, sigma) - sum(bill.values())
@@ -238,14 +237,17 @@ def fixed_point(
     tariff: Tariff,
     market: Market,
     scenario: Scenario,
+    b0: Dispatch,
     tol: float = 1e-3,
     max_iter: int = 50,
     damping: float | None = 0.5,
 ) -> tuple[np.ndarray, np.ndarray, Dispatch, Dispatch, list[float]]:
     """The consistent price-taker. Respond to the belief, clear at the response,
-    make that the belief, repeat until the bid stops moving. It knows its own
-    share, so each round also moves the tangent of its charge to the last bid,
-    and it expects curtailment where the last clearing cut it.
+    make that the belief, repeat until the bid stops moving. The belief each
+    round is ``Belief(the last clearing, consistent=True)``, ``b0`` to start:
+    the load knows its own share, so each round also moves the tangent of its
+    charge to the last bid, and it expects curtailment where the last clearing
+    cut it. ``b0`` is the dispatch at (δ, 0), as for ``best_response``.
     Each step moves a fraction ``damping`` toward the new response; ``None`` is
     the harmonic step 1/(k+1), which averages out the two-cycles a step merit
     order produces at scarcity hours. Returns (d_bid, sigma_bid, the dispatch
@@ -254,7 +256,6 @@ def fixed_point(
     wrong model there (RQ3b)."""
     delta, T = scenario.delta, scenario.T
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
-    b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
     belief, d_prev, sigma_prev, history = b0, delta.copy(), np.zeros(T), []
     for k in range(max_iter):
         d_bid, sigma_bid = best_response(

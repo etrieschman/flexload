@@ -160,7 +160,6 @@ class Tariff:
         d_other: np.ndarray,
         b0: Dispatch | None = None,
         d_hat=None,
-        own: bool = True,
         knows_share: bool = False,
     ) -> dict:
         """B = Σ_k Bᵏ, the reserve payment as a negative layer, as cvxpy expressions.
@@ -168,8 +167,9 @@ class Tariff:
         ``b0`` is the dispatch at (δ, 0), the source of ex-ante pools, fixed under
         every belief. Inside a price-taker's objective ``realized`` is its belief,
         ``d_hat`` (x̂) is required, and ``knows_share`` says whether it knows its
-        own share (``Share.charge``).
-        ``own=False`` bills everyone else as one load: no credit, no exemption."""
+        own share (``Share.charge``). The bill is the load's: everyone else's is
+        the same call with d and d° swapped, σ = 0 (so no credit) and the tariff
+        without the curtailable exemption, ``settle(own=False)``."""
         b0 = (
             realized if b0 is None else b0
         )  # one dispatch given: the load's belief plays both roles
@@ -187,12 +187,10 @@ class Tariff:
                 form.hours * d_other,
             )
             out[k] = form.charge(x, x_hat, x_other, pool, price, knows_share)
-        if own and self.exempt_curtailable and realized.curtailable:
+        if self.exempt_curtailable and realized.curtailable:
             out["reserve"] = cp.Constant(0.0)
         out["credit"] = (
-            -cp.sum(cp.multiply(realized.mu, sigma))
-            if (own and self.credit)
-            else cp.Constant(0.0)
+            -cp.sum(cp.multiply(realized.mu, sigma)) if self.credit else cp.Constant(0.0)
         )
         return out
 

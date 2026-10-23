@@ -141,7 +141,7 @@ for k in ("S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility", "bill_tot
 # Harmonic damping averages out the cycle a step merit order can produce.
 print("\nThe consistent price-taker: steps 2-4 iterated to a fixed point")
 t0 = time.time()
-fp = fl.fixed_point(theta, tau, market, scenario, max_iter=20, damping=None)
+fp = fl.fixed_point(theta, tau, market, scenario, b0, max_iter=20, damping=None)
 d_c, s_c, dispatch_c, believed, history = fp
 print(f"rounds [count]:\t{len(history)}")
 print(f"fixed-point time [s]:\t{time.time() - t0:.0f}")

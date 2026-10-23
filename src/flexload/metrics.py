@@ -9,6 +9,7 @@ alignment Δᵏ_t, recovery ρᵏ, fairness.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from itertools import product
 from pathlib import Path
 
@@ -32,15 +33,13 @@ def settle(
 ) -> dict[str, float]:
     """The bill in dollars, by layer plus the credit. ``realized`` is the
     dispatch at the bid, ``b0`` the one at (δ, 0). ``own=False`` bills everyone
-    else as one load."""
+    else as one load: d and d° swapped, σ = 0 so the credit is zero, and the
+    tariff without the curtailable exemption, which is the load's alone."""
     if own:
-        bill = tariff.bill(
-            realized.d, realized.sigma, realized, scenario.d_other, b0, own=True
-        )
+        bill = tariff.bill(realized.d, realized.sigma, realized, scenario.d_other, b0)
     else:
-        bill = tariff.bill(
-            scenario.d_other, np.zeros(scenario.T), realized, realized.d, b0, own=False
-        )
+        others = replace(tariff, exempt_curtailable=False)
+        bill = others.bill(scenario.d_other, np.zeros(scenario.T), realized, realized.d, b0)
     return {k: float(v.value) for k, v in bill.items()}
 
 
@@ -124,7 +123,7 @@ def respond(
         )
         dispatch, believed = market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0
     elif belief == "consistent":
-        _, _, dispatch, believed, history = fixed_point(theta, tariff, market, scenario)
+        _, _, dispatch, believed, history = fixed_point(theta, tariff, market, scenario, b0)
     else:
         raise ValueError(belief)
     return dispatch, b0, believed, history
@@ -139,27 +138,26 @@ def summary(
     b1: tuple | None = None,
 ) -> dict:
     """One row: welfare at B0, B1 and R, efficiency and its share of the value
-    of flexibility, the bill by layer at B0 and at R, mean |Δᵏ_t|, recovery,
-    fairness, the belief's price error, and the fixed point's iterations and
-    last change. ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if
-    already solved. S is read from a clearing at each of the three bids."""
+    of flexibility, the bill by layer at B0, R and B1, |Δᵏ_t| at R by its mean,
+    95th percentile and max over hours, recovery at R and B1, fairness, the
+    belief's price error, and the fixed point's iterations and last change.
+    ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if already solved.
+    S is read from a clearing at each of the three bids."""
     dispatch, b0, believed, history = respond(theta, tariff, market, scenario, belief)
     d1, s1 = planner(theta, market, scenario) if b1 is None else b1
     planned = market.clear(
         scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta)
     )
-    bill, bill_b0 = (
-        settle(tariff, scenario, dispatch, b0),
-        settle(tariff, scenario, b0, b0),
-    )
-    rho = recovery(tariff, scenario, dispatch, b0)
+    bill, bill_b0, bill_b1 = (settle(tariff, scenario, x, b0) for x in (dispatch, b0, planned))
+    rho, rho_b1 = (recovery(tariff, scenario, x, b0) for x in (dispatch, planned))
     fair = fairness(tariff, scenario, dispatch, planned, b0)
-    wedge = dict(
-        alignment(tariff, market, scenario, dispatch, b0)
-        .group_by("layer")
-        .agg(pl.col("wedge").abs().mean())
-        .iter_rows()
-    )
+    wedge = alignment(tariff, market, scenario, dispatch, b0)
+    align = {}
+    for k in LAYERS:
+        w = np.abs(wedge.filter(pl.col("layer") == k)["wedge"].to_numpy())
+        align[f"alignment_{k}"] = float(w.mean())
+        align[f"alignment_p95_{k}"] = float(np.percentile(w, 95))
+        align[f"alignment_max_{k}"] = float(w.max())
     S_B0, S_R, S_B1 = (
         float(
             S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.Pi).value
@@ -182,8 +180,11 @@ def summary(
         **{f"bill_{k}": v for k, v in bill.items()},
         "bill_total": sum(bill.values()),
         **{f"bill_b0_{k}": v for k, v in bill_b0.items()},
-        **{f"alignment_{k}": float(wedge[k]) for k in LAYERS},
+        **{f"bill_b1_{k}": v for k, v in bill_b1.items()},
+        "bill_b1_total": sum(bill_b1.values()),
+        **align,
         **{f"recovery_{k}": v for k, v in rho.items()},
+        **{f"recovery_b1_{k}": v for k, v in rho_b1.items()},
         **{f"fairness_{k}": v for k, v in fair.items()},
         "price_error": float(np.abs(believed.lam - dispatch.lam).mean()),
         "iterations": len(history) or None,
