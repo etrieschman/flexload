@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from .load import LoadType, S, best_response, c_sigma, fixed_point, planner
+from .load import Belief, LoadType, S, best_response, c_sigma, fixed_point, planner
 from .system import Dispatch, Market, Scenario
 from .tariff import LAYERS, Tariff
 
@@ -80,7 +80,7 @@ def respond(
     b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
     history: list[float] = []
     if belief == "exogenous":
-        d_bid, sigma_bid = best_response(theta, tariff, scenario, b0, b0)
+        d_bid, sigma_bid = best_response(theta, tariff, scenario, Belief(b0, consistent=False), b0)
         dispatch, believed = market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0
     elif belief == "consistent":
         _, _, dispatch, believed, history = fixed_point(theta, tariff, market, scenario)

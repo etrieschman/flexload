@@ -7,19 +7,19 @@
     tau      = named_tariffs(scenario)["tau_0"]                  # τ, today's tariff
     theta    = named_types(scenario.T, "data_center_train")["mover"]   # θ
     b0       = market.clear(scenario, scenario.delta, 0, c_sigma(theta, scenario.delta))   # B0
-    d, sigma = best_response(theta, tau, scenario, b0, b0)                                   # R, exogenous price-taker
+    d, sigma = best_response(theta, tau, scenario, Belief(b0, False), b0)                   # R, exogenous price-taker
     dispatch = market.clear(scenario, d, sigma, c_sigma(theta, scenario.delta))
     bill     = settle(tau, scenario, dispatch, b0)
     d1, s1 = planner(theta, market, scenario)                                             # B1
 """
 
-from .load import BETA, BUSINESS, P, PSI, LoadType, S, V, best_response, c_sigma, feasible, fixed_point, named_types, payoff, planner
+from .load import BETA, BUSINESS, P, PSI, Belief, LoadType, S, V, best_response, c_sigma, feasible, fixed_point, named_types, payoff, planner
 from .metrics import alignment, choose, fairness, recovery, respond, settle, summary, table, tex
 from .system import C_inv, Dispatch, ORDC, Market, Scenario, margin, scenario, tighten, windows
 from .tariff import LAYERS, Marginal, Share, Tariff, TwoPart, named_tariffs, peak_hour
 
 __all__ = [
-    "BETA", "BUSINESS", "C_inv", "Dispatch", "LAYERS", "LoadType", "Marginal", "Market", "ORDC", "P", "PSI", "S", "Scenario", "Share", "Tariff",
+    "BETA", "BUSINESS", "Belief", "C_inv", "Dispatch", "LAYERS", "LoadType", "Marginal", "Market", "ORDC", "P", "PSI", "S", "Scenario", "Share", "Tariff",
     "TwoPart", "V", "alignment", "best_response", "c_sigma", "choose", "fairness", "feasible",
     "fixed_point", "margin", "named_tariffs", "named_types", "payoff", "peak_hour", "planner",
     "recovery", "respond", "scenario", "settle", "summary", "table", "tex", "tighten", "windows",

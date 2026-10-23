@@ -93,7 +93,7 @@ print(f"investment layer cost over the window [M$]:\t{b0.C_inv / 1e6:,.2f}")
 # Step 3. The load bids. The exogenous price-taker solves its QP taking the B0
 # prices, layer costs and posted rates as given; the result is the bid.
 print("\n3. The load bids (exogenous price-taker)")
-d_bid, sigma_bid = fl.best_response(theta, tau, scenario, belief=b0, b0=b0)
+d_bid, sigma_bid = fl.best_response(theta, tau, scenario, fl.Belief(b0, consistent=False), b0)
 shift = np.abs(d_bid - scenario.delta)
 print(f"energy moved away from delta over the window [MWh]:\t{shift.sum():,.0f}")
 print(f"hours moved most [hour of window]:\t{np.argsort(-shift)[:8]}")

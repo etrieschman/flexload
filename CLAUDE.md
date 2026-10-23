@@ -12,8 +12,9 @@ nothing else. Aligned 2026-10-21. Private repo.
 - **No code, file edits, repos or commits without an explicit yes in chat** for that
   piece of work. "Feel free" in a planning conversation is not a yes. Propose, list the
   decisions needed, stop.
-- Use the memo's terms. Do not invent abstractions (no "PriceView", "Belief class",
-  "truth rule"). If a name needs explaining, it is wrong.
+- Use the memo's terms. Do not invent abstractions (no "PriceView", "truth rule"). A
+  capitalized class is a record for one of the report's objects, with no behavior. If a
+  name needs explaining, it is wrong.
 - Letters where the memo has a letter, words where it has a word (table below).
 - An option exists only if a research question in the memo varies it; an option is an
   enum value or a vector, never a branch in a solver; the memo's base configuration is
@@ -35,12 +36,13 @@ nothing else. Aligned 2026-10-21. Private repo.
 | θ = (ψ, β, A, p, 𝕀{sells reserve}, 𝕀{curtailable}); dᶠⁱʳᵐ = (1−β) minₜ δₜ | `LoadType(psi, beta, A, p, sells_reserve, curtailable)`; `theta.d_firm(delta)` (a level; None if not curtailable) | `load.py` |
 | A ∈ {1ᵀ, 0, I}; θ₀…θ₄ as a data center or a bitcoin mine | `np.ones((1, T))`, `np.zeros((0, T))`, `np.eye(T)` in `named_types(T, business)` with `PSI`, `BETA`, `P`, `BUSINESS` | `load.py` |
 | c^σₜ = 2pψβδₜ; V(d, σ); 𝒟_θ | `c_sigma`, `V`, `feasible` | `load.py` |
-| the load's objective under a belief 𝓜̃ | `payoff(theta, tariff, scenario, belief, b0, d_bid, sigma_bid, consistent)`; the belief is a `Dispatch` plus the Table 2 row, `consistent`; `b0` holds the ex-ante pools under every belief; the tildes (σ̃ where μ̃ ≥ c^σ; d̃ = dᶠⁱʳᵐ where the believed dispatch cut the load, if consistent) are built there | `load.py` |
-| R (QP) | `best_response(theta, tariff, scenario, belief, b0, consistent) -> (d_bid, sigma_bid)` | `load.py` |
+| 𝓜̃, a price-taker's belief: a dispatch and the Table 2 row | `Belief(dispatch, consistent)`; `consistent=False` is the exogenous price-taker, `True` the consistent one | `load.py` |
+| the load's objective under a belief 𝓜̃ | `payoff(theta, tariff, scenario, belief, b0, d, sigma)` = V − B on the expected (d̃, σ̃); `b0` holds the ex-ante pools under every belief | `load.py` |
+| R (QP) | `best_response(theta, tariff, scenario, belief, b0) -> (d_bid, sigma_bid)`; builds the tildes: σ̃ = σ_bid, constrained to 0 where μ̃ < c^σ; d̃ = dᶠⁱʳᵐ where the believed dispatch cut the load, if consistent | `load.py` |
 | consistent price-taker | `fixed_point(theta, tariff, market, scenario) -> (d, σ, dispatch, believed, history)` | `load.py` |
 | B1 | `planner(theta, market, scenario) -> (d_bid, sigma_bid)`; S^B1 is read from its clearing, as for R | `load.py` |
 | B0 | `market.clear(scenario, delta, zeros, c_sigma, d_firm)`; no function | — |
-| the load's belief about curtailment | set by the belief (report Table 2): the exogenous price-taker consumes its bid; the consistent one expects dᶠⁱʳᵐ where the believed dispatch cut it, `belief.d < belief.d_bid` (`payoff(consistent=True)`; `fixed_point` passes it). Same as λ̃ at VOLL except at an exact tie, where the LP may shed others instead (2026-10-23) | `load.py` |
+| the load's belief about curtailment | set by the belief (report Table 2): the exogenous price-taker consumes its bid; the consistent one expects dᶠⁱʳᵐ where the believed dispatch cut it, `belief.dispatch.d < belief.dispatch.d_bid` (`best_response` when `belief.consistent`; `fixed_point` passes `Belief(dispatch, True)`). Same as λ̃ at VOLL except at an exact tie, where the LP may shed others instead (2026-10-23) | `load.py` |
 | τ: a charge form per layer, marginal / split pool / two-part; slots 𝒲ᵏ (`hours`, a 0/1 vector), ex ante, credit, exempt | `Tariff(energy, reserve, investment, credit, exempt_curtailable)`; `Marginal(hours)`, `Share(hours, ex_ante)`, `TwoPart(hours, ex_ante, phi, T)`; `np.ones(T)`, `peak_hour(d_sys)` | `tariff.py` |
 | B = Σₖ Bᵏ, ∂Bᵏ/∂dₜ | `tariff.bill(d, sigma, realized, d_other, b0, d_hat, own, knows_share)`, `tariff.marginal(...)`; `realized` is the dispatch at the bid, `b0` the one at (δ, 0); every layer is hourly (the investment cost is spread over its hours); cvxpy expressions, `.value` for numbers. `marginal` holds Cᵏ fixed: exact ex ante, missing ∂Cᵏ/∂d ex post | `tariff.py` |
 | τ₀ today | `named_tariffs(scenario)` returns τ₀ only, every slot spelled out (Erich, 2026-10-21). No other tariff, no menu, no election in the code; Workshop II adds them. | `tariff.py` |
@@ -60,9 +62,9 @@ inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 | accounting | c^σᵀσ sits in V **and** in the LP objective (the load offers at cost). Welfare counts it once: `S = V − C_sys + c^σᵀσ`. The reserve payment μᵀσ is a **credit layer of the bill** (`Tariff.credit`); the load's payoff is V − B. |
 | the tariff is a function | three charge forms (`Marginal`, `Share`, `TwoPart`), one per layer, energy included (Erich, 2026-10-21: energy is a layer like the others), plus the `credit` and `exempt_curtailable` slots. Every layer is hourly; the investment cost is spread over its hours. No enums, no strings, no lowercase wrappers: hours 𝒲ᵏ are 0/1 vectors, `ex_ante` is a bool, φ and T are computed from the pool unless `T` is given. τ ranges over a finite set; φ and ε are swept, not optimized (report §3). |
 | what the bill reads | a `Dispatch` (λ, μ and the pools ride on it) plus d°. Each layer's `ex_ante` flag picks the ex-ante or realized dispatch. Inside the load's objective the dispatch is its belief; a price-setter's belief would be a dispatch whose prices are expressions. Revised 2026-10-19 from "explicit arguments": the nine-argument signatures were the cost. |
-| own share (was: rate-taker) | revised 2026-10-21. The exogenous price-taker takes the **posted average rate** at x̂ = δ (ERCOT posts a provisional share). The consistent price-taker **knows its share**: its charge is linearized at x̂ with the true slope Cᵏx°/(x̂+x°)², and the fixed point iterates x̂ with the prices, so it is exact at convergence. The exact charge is concave in x, so one QP cannot do it; the iteration can. x̂ is the bid the belief answered, `belief.d_bid` (δ for the exogenous one); `consistent` is the one flag on `best_response` (2026-10-23: replaced `d_hat`, `anticipate`, `voll`, `knows_share`); `Tariff.bill` keeps `d_hat` and `knows_share` since tariff.py cannot see the load. |
-| beliefs | no belief class. A price-taker's belief is a `Dispatch` and the Table 2 row, `consistent`, with x̂ and the expected curtailment read off the dispatch; a price-setter's belief is the market itself (bilevel, not built; `planner` already embeds dispatch with the load's bid as a variable, which is its shape). The operator knows which belief the load holds (report §3); RQ4 relaxes that. |
-| clearing | `clear` takes dᶠⁱʳᵐ as a vector from the type (`theta.d_firm`), not a tariff. The cost `C_sys` and the `constraints` are written once and shared by `clear`, `planner` and `S`. Net reserve X is its own variable so per-unit rows stay sparse. |
+| own share (was: rate-taker) | revised 2026-10-21. The exogenous price-taker takes the **posted average rate** at x̂ = δ (ERCOT posts a provisional share). The consistent price-taker **knows its share**: its charge is linearized at x̂ with the true slope Cᵏx°/(x̂+x°)², and the fixed point iterates x̂ with the prices, so it is exact at convergence. The exact charge is concave in x, so one QP cannot do it; the iteration can. x̂ is the bid the belief answered, `belief.dispatch.d_bid` (δ for the exogenous one); the Table 2 row is `Belief.consistent` (2026-10-23; it replaced the flags `d_hat`, `anticipate`, `voll`, `knows_share` on `best_response`); `Tariff.bill` keeps `d_hat` and `knows_share` since tariff.py cannot see the load. |
+| beliefs | `Belief(dispatch, consistent)`, a frozen record with no methods (2026-10-23; the 2026-10-13 "no belief class" ruled out a class with behavior, not the report's 𝓜̃). A price-taker reads λ, μ, the pools, x̂ and its expected curtailment off `dispatch`; `consistent` is the Table 2 row. A price-setter's belief is the market itself (bilevel, not built): its dispatch will carry prices that are expressions of the bid, and `payoff` reads it unchanged; `planner` already embeds dispatch with the load's bid as a variable, which is its shape. The operator knows which belief the load holds (report §3); RQ4 relaxes that. |
+| clearing | `clear` takes dᶠⁱʳᵐ as a vector from the type (`theta.d_firm`), not a tariff. The cost `C_sys` and the `constraints` are written once and shared by `clear`, `planner` and `S`. Net reserve X is its own variable so per-unit rows stay sparse. `clear` clips a negative offer to zero (a solver's −1e-10 on σ ≥ 0); the QPs return the solver's value. |
 | curtailment | **a load type**, not a tariff (Erich, 2026-10-19): `LoadType.curtailable` declares a firm **level** dᶠⁱʳᵐ = (1−β) minₜ δₜ, constant over the window, as ERCOT SB6 and PJM Non-Firm Contract Demand use a MW level (2026-10-21; was a profile). The LP curtails only where κ > VOLL; unpaid, in exchange for connection. The planner holds the headroom instrument but consumes what it bids. τ₅'s reserve exemption is a tariff slot. |
 | operating window | T hours from `start` (report: 𝒯); the week is the default instance, nothing is hard-coded to it. cⁱⁿᵛ is annual on the scenario and prorated by T/8760. A is one of the report's three matrices; a tariff's hours 𝒲ᵏ are a weight vector, `np.ones(T)` or `peak_hour(d_sys)`. |
 | solver | Gurobi (academic license) for the LP and the QPs; 3× HiGHS on the clearing. `Market(solver="HIGHS")` and `best_response(..., solver=)` switch. |
@@ -79,7 +81,7 @@ inputs are numbers or variables; read a number with `.value`. No wrapper layer.
 src/flexload/
   system.py   Scenario; scenario, windows, tighten, margin; ORDC.from_lolp; Dispatch; Market (ordc_for, C_sys, constraints, clear, marginal_cost); C_inv
   tariff.py   peak_hour; Marginal, Share, TwoPart; Tariff (bill, marginal); total; named_tariffs (τ₀)
-  load.py     LoadType; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; S; payoff; best_response; fixed_point; planner
+  load.py     LoadType; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; S; Belief; payoff; best_response; fixed_point; planner
   metrics.py  settle; recovery; alignment; fairness; respond; summary; table; choose
 notebooks/walkthrough.py   jupytext cells; the documentation
 tests/        conftest (3-generator, 4-hour scenario); test_system, test_tariff, test_load
@@ -88,8 +90,11 @@ docs/         assumptions.md (every non-report choice, one line each); catalog/l
 
 Imports run one way: system ← tariff ← load ← metrics.
 
-## Status (2026-10-21)
+## Status (2026-10-23)
 
+- 2026-10-23: `Belief(dispatch, consistent)` replaces the flag beside the dispatch;
+  `payoff` is V − B on the expected outcome and `best_response` builds the tildes;
+  the σ clip moved from the QPs into `clear`. 36 tests pass.
 - Evening 2026-10-21: Erich read load.py and metrics.py. `C_inv` is floored at zero
   (a market whose prices overpay the fleet bills zero on the investment layer); the
   reserve margin default is 0.15, where ERCOT's annual rents pay the fleet's fixed cost

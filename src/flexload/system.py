@@ -395,7 +395,8 @@ class Market:
         is the type's level for a curtailable load, ``None`` otherwise. A
         curtailable load does not offer reserve."""
         T, J = scenario.T, scenario.J
-        d_bid, sigma_bid = np.asarray(d_bid, float), np.asarray(sigma_bid, float)
+        d_bid = np.asarray(d_bid, float)
+        sigma_bid = np.maximum(np.asarray(sigma_bid, float), 0.0)  # a solver's −1e-10 on σ ≥ 0 is no offer
         c_sigma = np.broadcast_to(np.asarray(c_sigma, float), (T,))
         curtailable = d_firm is not None
         d_firm = np.asarray(d_firm, float) if curtailable else d_bid

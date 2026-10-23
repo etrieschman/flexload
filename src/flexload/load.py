@@ -3,11 +3,12 @@ B0 bids (δ, 0). R best-responds to the tariff under a belief.
 B1 is the planner's optimum. Report §3, "Flexible load".
 
 The load bids (d_bid, sigma_bid). Dispatch returns what it consumed and what
-cleared, (d, sigma). A price-taker's belief about dispatch is a ``Dispatch``:
-it takes λ, μ and each layer's cost as given. Its bill is then linear in the
-bid and the best response is a QP. The exogenous price-taker's belief is the
-clearing at (δ, 0); the consistent one's is the fixed point ``fixed_point``
-closes. A price-setter's belief is the market itself (bilevel, not built).
+cleared, (d, sigma). A price-taker's belief 𝓜̃ is a ``Belief``: a ``Dispatch``
+it takes λ, μ and each layer's cost from, and the row of report Table 2 it
+holds. Its bill is then linear in the bid and the best response is a QP. The
+exogenous price-taker's belief is the clearing at (δ, 0); the consistent one's
+is the fixed point ``fixed_point`` closes. A price-setter's belief is the
+market itself (bilevel, not built).
 """
 
 from __future__ import annotations
@@ -61,9 +62,21 @@ PSI = {"low": 0.5, "medium": 1.0, "high": 2.0}  # $/MW²h
 BETA = {"low": 0.05, "medium": 0.2, "high": 0.5}
 P = {"low": 0.02, "high": 0.2}
 BUSINESS = {  # (ψ, β, A): what the load is, behind its designation
-    "data_center_infer": ("high", "medium", "day"),  # serves requests as they come; defers batch jobs within the day
-    "data_center_train": ("medium", "medium", "window"),  # checkpoints and resumes training jobs within the window
-    "bitcoin_mine": ("low", "high", "elastic"),  # curtailed hashing is lost, not shifted
+    "data_center_infer": (
+        "high",
+        "medium",
+        "day",
+    ),  # serves requests as they come; defers batch jobs within the day
+    "data_center_train": (
+        "medium",
+        "medium",
+        "window",
+    ),  # checkpoints and resumes training jobs within the window
+    "bitcoin_mine": (
+        "low",
+        "high",
+        "elastic",
+    ),  # curtailed hashing is lost, not shifted
 }
 
 
@@ -145,84 +158,78 @@ def S(theta: LoadType, market: Market, scenario: Scenario, d, sigma, u, r, shed,
 # ----------------------------------------------------------------------------
 # R
 # ----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Belief:
+    """𝓜̃, a price-taker's belief about dispatch (report Table 2): the
+    ``dispatch`` it reads λ, μ, the layer costs, x̂ (``dispatch.d_bid``) and its
+    expected curtailment from, and the row it holds. ``consistent`` False is
+    the exogenous price-taker: ``dispatch`` is the clearing at (δ, 0), it pays
+    the posted rate and consumes its bid. True is the consistent price-taker:
+    ``dispatch`` is the clearing at its last bid, it knows its share and expects
+    dᶠⁱʳᵐ where that clearing cut it."""
+
+    dispatch: Dispatch
+    consistent: bool
+
+
 def payoff(
     theta: LoadType,
     tariff: Tariff,
     scenario: Scenario,
-    belief: Dispatch,
+    belief: Belief,
     b0: Dispatch,
-    d_bid,
-    sigma_bid,
-    consistent: bool,
+    d,
+    sigma,
 ):
-    """V(d̃, σ̃) − B(d̃, σ̃) under the belief, a dispatch, where the tildes are
-    the load's expectation of its own dispatch (report Table 2). Under every
-    belief σ̃ = σ_bid where μ̃ ≥ c^σ, else 0, and the ex-ante pools Ĉᵏ come
-    from ``b0``, the dispatch at (δ, 0). The exogenous price-taker consumes
-    its bid and takes the posted rate at x̂ = δ. The ``consistent`` one knows
-    its share, linearized at x̂, the bid its belief answered, and expects to be
-    cut to dᶠⁱʳᵐ where the believed dispatch cut it."""
-    delta = scenario.delta
-    sigma_tilde = sigma_bid
-    if theta.sells_reserve:
-        clears = (belief.mu >= c_sigma(theta, delta) - 1e-12).astype(float)
-        sigma_tilde = cp.multiply(clears, sigma_bid)
-    d_tilde = d_bid
-    if consistent and theta.curtailable:
-        cut = (belief.d < belief.d_bid - 1e-9).astype(float)
-        d_tilde = cp.multiply(1.0 - cut, d_bid) + cut * theta.d_firm(delta)
+    """V(d, σ) − B(d, σ) under the belief, on the consumption and cleared
+    reserve the load expects. The ex-ante pools Ĉᵏ come from ``b0``, the
+    dispatch at (δ, 0). The charge is linearized at x̂, the bid the belief
+    answered; the consistent price-taker knows its share there."""
     bill = tariff.bill(
-        d_tilde,
-        sigma_tilde,
-        belief,
+        d,
+        sigma,
+        belief.dispatch,
         scenario.d_other,
         b0,
-        d_hat=belief.d_bid,
+        d_hat=belief.dispatch.d_bid,
         own=True,
-        knows_share=consistent,
+        knows_share=belief.consistent,
     )
-    return V(theta, delta, d_tilde, sigma_tilde) - sum(bill.values())
+    return V(theta, scenario.delta, d, sigma) - sum(bill.values())
 
 
 def best_response(
     theta: LoadType,
     tariff: Tariff,
     scenario: Scenario,
-    belief: Dispatch,
+    belief: Belief,
     b0: Dispatch,
-    consistent: bool = False,
     solver: str = "GUROBI",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """max payoff over 𝒟_θ: a QP. ``belief`` is the dispatch the load takes
-    prices from, ``b0`` the dispatch at (δ, 0), the source of ex-ante pools.
-    ``consistent`` picks the row of report Table 2: the exogenous price-taker
-    (False) or the consistent one (True), see ``payoff``. In the hours where
-    the believed μ is below c^σ the load offers zero. Returns the bid
-    (d_bid, sigma_bid)."""
+    """max payoff over 𝒟_θ: a QP. The load bids (d_bid, σ_bid) and expects
+    (d̃, σ̃), report Table 2: σ̃ = σ_bid, offered only where the believed μ
+    covers c^σ; d̃ = d_bid, except that the consistent curtailable load expects
+    dᶠⁱʳᵐ where the believed dispatch cut it. Returns the bid."""
     T, delta = scenario.T, scenario.delta
+    believed = belief.dispatch
     d_bid = cp.Variable(T)
     sigma_bid = cp.Variable(T) if theta.sells_reserve else np.zeros(T)
     cons = feasible(theta, delta, d_bid, sigma_bid)
     if theta.sells_reserve:
-        clears = belief.mu >= c_sigma(theta, delta) - 1e-12
+        clears = believed.mu >= c_sigma(theta, delta) - 1e-12
         if not clears.all():
             cons.append(sigma_bid[~clears] == 0.0)
-    objective = payoff(
-        theta,
-        tariff,
-        scenario,
-        belief,
-        b0,
-        d_bid,
-        sigma_bid,
-        consistent,
-    )
+    d_tilde = d_bid
+    if belief.consistent and theta.curtailable:
+        cut = (believed.d < believed.d_bid - 1e-9).astype(float)
+        d_tilde = cp.multiply(1.0 - cut, d_bid) + cut * theta.d_firm(delta)
+    objective = payoff(theta, tariff, scenario, belief, b0, d_tilde, sigma_bid)
     problem = cp.Problem(cp.Maximize(objective), cons)
     problem.solve(solver=solver)
     if problem.status not in ("optimal", "optimal_inaccurate"):
         raise RuntimeError(f"best response failed: {problem.status}")
     if theta.sells_reserve:
-        sigma_bid = np.maximum(np.asarray(sigma_bid.value), 0.0)
+        sigma_bid = np.asarray(sigma_bid.value)
     return np.asarray(d_bid.value), sigma_bid
 
 
@@ -251,7 +258,7 @@ def fixed_point(
     belief, d_prev, sigma_prev, history = b0, delta.copy(), np.zeros(T), []
     for k in range(max_iter):
         d_bid, sigma_bid = best_response(
-            theta, tariff, scenario, belief, b0, consistent=True
+            theta, tariff, scenario, Belief(belief, consistent=True), b0
         )
         step = damping if damping is not None else 1.0 / (k + 1)
         d_bid = step * d_bid + (1 - step) * d_prev
@@ -310,5 +317,5 @@ def planner(
     if problem.status not in ("optimal", "optimal_inaccurate"):
         raise RuntimeError(f"planner failed: {problem.status}")
     if theta.sells_reserve:
-        sigma_bid = np.maximum(np.asarray(sigma_bid.value), 0.0)
+        sigma_bid = np.asarray(sigma_bid.value)
     return np.asarray(d_bid.value), sigma_bid
