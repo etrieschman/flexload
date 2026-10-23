@@ -14,13 +14,13 @@
 """
 
 from .load import BETA, BUSINESS, P, PSI, Belief, LoadType, S, V, best_response, c_sigma, feasible, fixed_point, named_types, payoff, planner
-from .metrics import alignment, choose, fairness, recovery, respond, settle, summary, table, tex
+from .metrics import alignment, fairness, recovery, respond, settle, summary, table, tex
 from .system import C_inv, Dispatch, ORDC, Market, Scenario, margin, scenario, tighten, windows
 from .tariff import LAYERS, Marginal, Share, Tariff, TwoPart, named_tariffs, peak_hour
 
 __all__ = [
     "BETA", "BUSINESS", "Belief", "C_inv", "Dispatch", "LAYERS", "LoadType", "Marginal", "Market", "ORDC", "P", "PSI", "S", "Scenario", "Share", "Tariff",
-    "TwoPart", "V", "alignment", "best_response", "c_sigma", "choose", "fairness", "feasible",
+    "TwoPart", "V", "alignment", "best_response", "c_sigma", "fairness", "feasible",
     "fixed_point", "margin", "named_tariffs", "named_types", "payoff", "peak_hour", "planner",
     "recovery", "respond", "scenario", "settle", "summary", "table", "tex", "tighten", "windows",
 ]

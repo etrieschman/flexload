@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 
 from flexload.load import Belief, LoadType, S, best_response, c_sigma, fixed_point, named_types, planner
-from flexload.metrics import choose, recovery, respond, summary, table
+from flexload.metrics import recovery, respond, summary, table
 from flexload.system import Dispatch, Market
 from flexload.tariff import Marginal, Share, Tariff, named_tariffs, peak_hour
 
@@ -124,7 +124,6 @@ def test_table_and_choice(small):
     types = {k: v for k, v in named_types(small.T).items() if k in ("mover", "controllable")}
     t = table(types, tariffs, [market], [small])
     assert t.shape[0] == 2 and (t["efficiency"] >= -1e-4).all()
-    assert choose(t) in tariffs and choose(t, g="total", epsilon=1e9) in tariffs
 
 
 def test_curtailable_planner_is_not_hurt_by_the_instrument(pjm, small):

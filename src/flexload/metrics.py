@@ -1,6 +1,7 @@
-"""Settlement, welfare, the outcomes, the loop that fills the operator's
-table, one row per (type, tariff, market, window), and the operator's rule
-over the table. Report §1 "Outcomes" and §3 "System operator".
+"""Settlement, welfare, the outcomes, and the loop that fills the operator's
+table, one row per (type, tariff, market, window). Report §1 "Outcomes" and
+§3 "System operator". The operator's rule over the table is not built
+(deleted 2026-10-23; git 22257a4 has the last version).
 
 Outcomes: welfare S at B0, B1 and R; efficiency S^B1 − S^R; and per layer,
 alignment Δᵏ_t, recovery ρᵏ, fairness.
@@ -22,37 +23,75 @@ from .tariff import LAYERS, Tariff
 # ----------------------------------------------------------------------------
 # settlement
 # ----------------------------------------------------------------------------
-def settle(tariff: Tariff, scenario: Scenario, realized: Dispatch, b0: Dispatch, own: bool = True) -> dict[str, float]:
+def settle(
+    tariff: Tariff,
+    scenario: Scenario,
+    realized: Dispatch,
+    b0: Dispatch,
+    own: bool = True,
+) -> dict[str, float]:
     """The bill in dollars, by layer plus the credit. ``realized`` is the
     dispatch at the bid, ``b0`` the one at (δ, 0). ``own=False`` bills everyone
     else as one load."""
     if own:
-        bill = tariff.bill(realized.d, realized.sigma, realized, scenario.d_other, b0, own=True)
+        bill = tariff.bill(
+            realized.d, realized.sigma, realized, scenario.d_other, b0, own=True
+        )
     else:
-        bill = tariff.bill(scenario.d_other, np.zeros(scenario.T), realized, realized.d, b0, own=False)
+        bill = tariff.bill(
+            scenario.d_other, np.zeros(scenario.T), realized, realized.d, b0, own=False
+        )
     return {k: float(v.value) for k, v in bill.items()}
 
 
 # ----------------------------------------------------------------------------
 # outcomes per layer (welfare and efficiency are in ``summary``)
 # ----------------------------------------------------------------------------
-def recovery(tariff: Tariff, scenario: Scenario, realized: Dispatch, b0: Dispatch) -> dict[str, float]:
+def recovery(
+    tariff: Tariff, scenario: Scenario, realized: Dispatch, b0: Dispatch
+) -> dict[str, float]:
     """ρᵏ = Cᵏ − Bᵏ(d, σ) − Bᵏ(d°, 0): the layer's realized cost less what the
     load and everyone else pay for it. Zero for energy at the margin."""
-    own, others = settle(tariff, scenario, realized, b0, own=True), settle(tariff, scenario, realized, b0, own=False)
-    cost = {"energy": float(realized.C_energy.sum()), "reserve": float(realized.C_res.sum()), "investment": realized.C_inv}
+    own, others = (
+        settle(tariff, scenario, realized, b0, own=True),
+        settle(tariff, scenario, realized, b0, own=False),
+    )
+    cost = {
+        "energy": float(realized.C_energy.sum()),
+        "reserve": float(realized.C_res.sum()),
+        "investment": realized.C_inv,
+    }
     return {k: cost[k] - own[k] - others[k] for k in LAYERS}
 
 
-def alignment(tariff: Tariff, market: Market, scenario: Scenario, realized: Dispatch, b0: Dispatch) -> pl.DataFrame:
+def alignment(
+    tariff: Tariff, market: Market, scenario: Scenario, realized: Dispatch, b0: Dispatch
+) -> pl.DataFrame:
     """Δᵏ_t = ∂Bᵏ/∂d_t − ∂Cᵏ_sys/∂d_t, one row per hour and layer."""
-    charge, cost = tariff.marginal(realized.d, realized, scenario.d_other, b0), market.marginal_cost(realized)
-    rows = [(t, k, float(charge[k][t]), float(cost[k][t])) for k in LAYERS for t in range(scenario.T)]
-    out = pl.DataFrame(rows, schema=["t", "layer", "marginal_charge", "marginal_cost"], orient="row")
-    return out.with_columns((pl.col("marginal_charge") - pl.col("marginal_cost")).alias("wedge"))
+    charge, cost = (
+        tariff.marginal(realized.d, realized, scenario.d_other, b0),
+        market.marginal_cost(realized),
+    )
+    rows = [
+        (t, k, float(charge[k][t]), float(cost[k][t]))
+        for k in LAYERS
+        for t in range(scenario.T)
+    ]
+    out = pl.DataFrame(
+        rows, schema=["t", "layer", "marginal_charge", "marginal_cost"], orient="row"
+    )
+    return out.with_columns(
+        (pl.col("marginal_charge") - pl.col("marginal_cost")).alias("wedge")
+    )
 
 
-def fairness(tariff: Tariff, scenario: Scenario, responding: Dispatch, planned: Dispatch, b0: Dispatch) -> dict[str, float]:
+def fairness(
+    tariff: Tariff,
+    scenario: Scenario,
+    responding: Dispatch,
+    planned: Dispatch,
+    b0: Dispatch,
+) -> dict[str, float]:
     """Bᵏ(d°)|R − Bᵏ(d°)|B1: how everyone else's bill moves when the load plays R instead of B1."""
     at_r = settle(tariff, scenario, responding, b0, own=False)
     at_b1 = settle(tariff, scenario, planned, b0, own=False)
@@ -80,7 +119,9 @@ def respond(
     b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
     history: list[float] = []
     if belief == "exogenous":
-        d_bid, sigma_bid = best_response(theta, tariff, scenario, Belief(b0, consistent=False), b0)
+        d_bid, sigma_bid = best_response(
+            theta, tariff, scenario, Belief(b0, consistent=False), b0
+        )
         dispatch, believed = market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0
     elif belief == "consistent":
         _, _, dispatch, believed, history = fixed_point(theta, tariff, market, scenario)
@@ -104,26 +145,49 @@ def summary(
     already solved. S is read from a clearing at each of the three bids."""
     dispatch, b0, believed, history = respond(theta, tariff, market, scenario, belief)
     d1, s1 = planner(theta, market, scenario) if b1 is None else b1
-    planned = market.clear(scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta))
-    bill, bill_b0 = settle(tariff, scenario, dispatch, b0), settle(tariff, scenario, b0, b0)
+    planned = market.clear(
+        scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta)
+    )
+    bill, bill_b0 = (
+        settle(tariff, scenario, dispatch, b0),
+        settle(tariff, scenario, b0, b0),
+    )
     rho = recovery(tariff, scenario, dispatch, b0)
     fair = fairness(tariff, scenario, dispatch, planned, b0)
-    wedge = dict(alignment(tariff, market, scenario, dispatch, b0).group_by("layer").agg(pl.col("wedge").abs().mean()).iter_rows())
+    wedge = dict(
+        alignment(tariff, market, scenario, dispatch, b0)
+        .group_by("layer")
+        .agg(pl.col("wedge").abs().mean())
+        .iter_rows()
+    )
     S_B0, S_R, S_B1 = (
-        float(S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.Pi).value)
+        float(
+            S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.Pi).value
+        )
         for x in (b0, dispatch, planned)
     )
     value = S_B1 - S_B0
     return {
-        "tariff": tariff.name, "type": theta.name, "market": market.reserve, "belief": belief, "start": scenario.start,
-        "S_B0": S_B0, "S_B1": S_B1, "S_R": S_R, "efficiency": S_B1 - S_R, "value_of_flexibility": value,
+        "tariff": tariff.name,
+        "type": theta.name,
+        "market": market.reserve,
+        "belief": belief,
+        "start": scenario.start,
+        "S_B0": S_B0,
+        "S_B1": S_B1,
+        "S_R": S_R,
+        "efficiency": S_B1 - S_R,
+        "value_of_flexibility": value,
         "efficiency_share": (S_B1 - S_R) / value if value > 1e-9 else None,
-        **{f"bill_{k}": v for k, v in bill.items()}, "bill_total": sum(bill.values()),
+        **{f"bill_{k}": v for k, v in bill.items()},
+        "bill_total": sum(bill.values()),
         **{f"bill_b0_{k}": v for k, v in bill_b0.items()},
         **{f"alignment_{k}": float(wedge[k]) for k in LAYERS},
-        **{f"recovery_{k}": v for k, v in rho.items()}, **{f"fairness_{k}": v for k, v in fair.items()},
+        **{f"recovery_{k}": v for k, v in rho.items()},
+        **{f"fairness_{k}": v for k, v in fair.items()},
         "price_error": float(np.abs(believed.lam - dispatch.lam).mean()),
-        "iterations": len(history) or None, "last_change": history[-1] if history else None,
+        "iterations": len(history) or None,
+        "last_change": history[-1] if history else None,
     }
 
 
@@ -145,40 +209,12 @@ def table(
     return pl.DataFrame(rows)
 
 
-def choose(table: pl.DataFrame, rule: str = "maxmin_welfare", prior: dict[str, float] | None = None, g: str = "layer", epsilon: float | None = None) -> str:
-    """The operator's objective as a rule over the table. ``maxmin_welfare``:
-    the tariff with the largest worst-case mean welfare over types. The
-    inflexible load's welfare is the same under every tariff, so leave it out
-    of ``table``. ``expected_welfare``: the largest welfare averaged over types
-    with ``prior`` weights. The recovery constraint g(ρ) ≤ 0 drops a tariff
-    when any type breaks it: ``g="layer"`` holds each layer within ``epsilon``,
-    ``g="total"`` holds the bill in total; ``epsilon=None`` skips it."""
-    t = table
-    if epsilon is not None:
-        if g == "layer":
-            broken = t.filter((pl.col("recovery_reserve").abs() > epsilon) | (pl.col("recovery_investment").abs() > epsilon))
-        elif g == "total":
-            broken = t.filter((pl.col("recovery_reserve") + pl.col("recovery_investment")).abs() > epsilon)
-        else:
-            raise ValueError(g)
-        t = t.filter(~pl.col("tariff").is_in(broken["tariff"].unique()))
-    by_type = t.group_by("tariff", "type").agg(pl.col("S_R").mean())
-    if rule == "maxmin_welfare":
-        score = by_type.group_by("tariff").agg(pl.col("S_R").min().alias("score"))
-    elif rule == "expected_welfare":
-        if prior is None:
-            raise ValueError("expected_welfare needs a prior over types")
-        weights = pl.DataFrame({"type": list(prior), "w": list(prior.values())})
-        score = by_type.join(weights, on="type").group_by("tariff").agg((pl.col("S_R") * pl.col("w")).sum().alias("score"))
-    else:
-        raise ValueError(rule)
-    return str(score.sort("score", descending=True)["tariff"][0])
-
-
 # ----------------------------------------------------------------------------
 # a table for the report
 # ----------------------------------------------------------------------------
-def tex(table: pl.DataFrame, path: str | Path, caption: str, label: str, digits: int = 0) -> None:
+def tex(
+    table: pl.DataFrame, path: str | Path, caption: str, label: str, digits: int = 0
+) -> None:
     """Write ``table`` as a booktabs table for ``\\input``. Column names are the
     headers, written as given; floats get ``digits`` decimals, integers none,
     both thousands separators; nulls print as --."""
