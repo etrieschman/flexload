@@ -47,7 +47,7 @@ nothing else. Aligned 2026-10-21. Private repo.
 | B = Σₖ Bᵏ, ∂Bᵏ/∂dₜ | `tariff.bill(d, sigma, realized, d_other, b0, d_hat, knows_share)`, `tariff.marginal(...)`; `realized` is the dispatch at the bid, `b0` the one at (δ, 0); the bill is the load's, and everyone else's is `settle(own=False)`: d and d° swapped, σ = 0, `replace(tariff, exempt_curtailable=False)` (2026-10-23; `own` left `bill`); every layer is hourly (the investment cost is spread over its hours); cvxpy expressions, `.value` for numbers. `marginal` holds Cᵏ fixed: exact ex ante, missing ∂Cᵏ/∂d ex post | `tariff.py` |
 | τ₀ today | `named_tariffs(scenario)` returns τ₀ only, every slot spelled out (Erich, 2026-10-21). No other tariff, no menu, no election in the code; Workshop II adds them. | `tariff.py` |
 | S, one formula: the planner's objective and the outcome | `S(theta, market, scenario, d, sigma, u, r, shed, y, Pi)`, a cvxpy expression | `load.py` |
-| settlement; ρᵏ; Δᵏₜ; fairness; efficiency S^B1 − S^R | `settle`, `recovery`, `alignment`, `fairness`; `summary` (columns `S_B0, S_B1, S_R, efficiency, price_error`; bill and ρᵏ at R and at B1, `bill_b1_*`, `recovery_b1_*`; |Δᵏₜ| at R by mean, p95 and max, `alignment_*`, `alignment_p95_*`, `alignment_max_*`) | `metrics.py` |
+| settlement; ρᵏ; Δᵏₜ; fairness; efficiency S^B1 − S^R | `settle`, `recovery`, `alignment`, `fairness`; `summary` (columns `S_B0, S_B1, S_R, efficiency, price_error`; bill and ρᵏ at R and at B1, `bill_b1_*`, `recovery_b1_*`; Δᵏₜ at R, signed: mean over hours `alignment_*`, hours where nonzero `alignment_hours_*`, p1 and p99 over those hours `alignment_p1_*`, `alignment_p99_*`) | `metrics.py` |
 | R under a belief; the operator's table | `respond(theta, tariff, market, scenario, belief) -> (dispatch, b0, believed, history)`; `summary`; `table(types, tariffs, markets, scenarios)` | `metrics.py` |
 | the operator's rule: max-min / expected welfare s.t. g(ρ) ≤ 0 | deleted 2026-10-23 (Erich: not yet); git 22257a4 has `choose` | — |
 | the learner (fourth belief) | deleted 2026-10-21 (Erich: not thought through yet); git 0d47d74 has the last version | — |
@@ -85,6 +85,7 @@ src/flexload/
   load.py     LoadType; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; S; Belief; payoff; best_response; fixed_point; planner
   metrics.py  settle; recovery; alignment; fairness; respond; summary; table; tex
 notebooks/walkthrough.py   jupytext cells; the documentation
+notebooks/deliverableI.py  the report's figures 0-2 and tables 1-3 (§4), at the base configuration; writes notebooks/figures, notebooks/tables
 tests/        conftest (3-generator, 4-hour scenario); test_system, test_tariff, test_load
 docs/         assumptions.md (every non-report choice, one line each); catalog/large_load_arrangements.md (designations), catalog/bill_decomposition.md (every ERCOT charge)
 ```

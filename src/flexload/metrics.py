@@ -138,8 +138,10 @@ def summary(
     b1: tuple | None = None,
 ) -> dict:
     """One row: welfare at B0, B1 and R, efficiency and its share of the value
-    of flexibility, the bill by layer at B0, R and B1, |Δᵏ_t| at R by its mean,
-    95th percentile and max over hours, recovery at R and B1, fairness, the
+    of flexibility, the bill by layer at B0, R and B1, Δᵏ_t at R, signed: its
+    mean over the hours, the count of hours where it is nonzero, and its 1st and
+    99th percentiles over those hours (the wedge lives in the scarcity hours, so
+    percentiles over all hours land on zero), recovery at R and B1, fairness, the
     belief's price error, and the fixed point's iterations and last change.
     ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if already solved.
     S is read from a clearing at each of the three bids."""
@@ -154,10 +156,12 @@ def summary(
     wedge = alignment(tariff, market, scenario, dispatch, b0)
     align = {}
     for k in LAYERS:
-        w = np.abs(wedge.filter(pl.col("layer") == k)["wedge"].to_numpy())
+        w = wedge.filter(pl.col("layer") == k)["wedge"].to_numpy()
+        nonzero = w[np.abs(w) > 1e-6]
         align[f"alignment_{k}"] = float(w.mean())
-        align[f"alignment_p95_{k}"] = float(np.percentile(w, 95))
-        align[f"alignment_max_{k}"] = float(w.max())
+        align[f"alignment_hours_{k}"] = int(nonzero.size)
+        align[f"alignment_p1_{k}"] = float(np.percentile(nonzero, 1)) if nonzero.size else None
+        align[f"alignment_p99_{k}"] = float(np.percentile(nonzero, 99)) if nonzero.size else None
     S_B0, S_R, S_B1 = (
         float(
             S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.Pi).value
