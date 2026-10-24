@@ -60,7 +60,7 @@ class LoadType:
 # Placeholder parameter levels (docs/assumptions.md #16).
 PSI = {"low": 50.0, "medium": 100.0, "high": 200.0}  # $/MWh; a price of 2βψ pushes the load to its band
 BETA = {"low": 0.05, "medium": 0.2, "high": 0.5}
-P = {"low": 0.02, "high": 0.2}
+P = {"low": 0.05, "high": 0.2}
 BUSINESS = {  # (ψ, β, A): what the load is, behind its designation
     "data_center_infer": (
         "high",

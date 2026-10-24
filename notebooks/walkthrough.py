@@ -54,7 +54,7 @@ print(f"RTS-GMLC git ref:\t{rts.REF[:8]}")
 # `d_firm` its firm level (None unless curtailable).
 print("\n1. Fix the market and window; set the tariff")
 t0 = time.time()
-weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN)
+weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN, reserve_offer=RESERVE_OFFER)
 scenario = weeks[WEEK]
 market = fl.Market(reserve=RESERVE)
 market = replace(market, C_inv=fl.C_inv(market, weeks))

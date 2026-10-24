@@ -102,13 +102,16 @@ def scenario(
     T: int = 168,
     alpha: float = 0.05,
     reserve_margin: float | None = 0.15,
+    reserve_offer: float = 0.1,
 ) -> Scenario:
     """Hours ``[start, start + T)`` of RTS-GMLC's day-ahead series at one node.
     ``alpha`` sets the load's size: δ is that share of system load, hour by
     hour, carved out of the RTS total so δ + d° is the data. ``reserve_margin``
     scales both loads so the tightest hour has that margin (``tighten``). The
     default 0.15 is the margin at which ERCOT's prices pay the fleet's annual
-    investment cost (``C_inv`` ≈ 0 over the year)."""
+    investment cost (``C_inv`` ≈ 0 over the year). ``reserve_offer`` sets the
+    reserve offer cʳⱼ = reserve_offer × cᵘⱼ on thermal blocks (RTS-GMLC has
+    none; docs/assumptions.md #5); renewables and hydro offer none."""
     lo, hi = start, start + T
     load = rts.timeseries("load", "day_ahead")[lo:hi]
     if len(load) != T:
@@ -130,13 +133,15 @@ def scenario(
         if uid in renewable:
             avail = renewable[uid][uid].to_numpy().astype(float)
             cols.append(
-                (float(g["vom"] or 0.0), 0.0, inv, avail, float(g["pmax_mw"]), u, uid)
+                (float(g["vom"] or 0.0), 0.0, inv, avail, float(g["pmax_mw"]), u, uid)  # no offer: nothing idle to hold
             )
         else:
             for mw, cost in (
                 blocks.filter(pl.col("gen_uid") == uid).select("mw", "cost").iter_rows()
             ):
-                cols.append((float(cost), 0.0, inv, mw * np.ones(T), float(mw), u, uid))
+                cols.append(
+                    (float(cost), reserve_offer * float(cost), inv, mw * np.ones(T), float(mw), u, uid)
+                )
     s = Scenario(
         delta=delta,
         d_other=total - delta,
@@ -184,7 +189,10 @@ def _epsilon_std() -> float:
 
 
 def windows(
-    T: int = 168, alpha: float = 0.05, reserve_margin: float | None = 0.15
+    T: int = 168,
+    alpha: float = 0.05,
+    reserve_margin: float | None = 0.15,
+    reserve_offer: float = 0.1,
 ) -> list[Scenario]:
     """The year cut into operating windows of T hours, under one tightness
     scale: the annual tightest hour has the margin and the other windows keep
@@ -192,7 +200,10 @@ def windows(
     the fleet's annual investment cost and PJM is short about 1.06 B$."""
     hours = rts.timeseries("load", "day_ahead").height
     return tighten(
-        [scenario(s, T, alpha, reserve_margin=None) for s in range(0, hours - hours % T, T)],
+        [
+            scenario(s, T, alpha, reserve_margin=None, reserve_offer=reserve_offer)
+            for s in range(0, hours - hours % T, T)
+        ],
         reserve_margin,
     )
 
@@ -493,6 +504,7 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
                 s.capacity,
                 s.cost_inv,
                 s.cost_gen,
+                s.cost_res,
                 np.array([s.epsilon_std]),
             ):
                 h.update(np.ascontiguousarray(a).tobytes())

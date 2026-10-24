@@ -50,6 +50,7 @@ T = 168
 WEEK = 32  # the window: the year's tightest hour is in it
 ALPHA = 0.05
 RESERVE_MARGIN = 0.15
+RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
 TYPE = "mover"  # the type Figure 1 and Table 3 follow
 BUSINESSES = {"data_center_train": "training DC", "bitcoin_mine": "bitcoin mine"}
 MARKETS = ("ercot", "pjm")
@@ -92,7 +93,7 @@ STYLE = {"B0": "-", "R": "-"}
 # with their annual investment-layer cost, week 31, and τ₀.
 print("\nEnvironment")
 t0 = time.time()
-weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN)
+weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN, reserve_offer=RESERVE_OFFER)
 scenario = weeks[WEEK]
 markets = {m: fl.Market(reserve=m) for m in MARKETS}
 markets = {m: replace(mk, C_inv=fl.C_inv(mk, weeks)) for m, mk in markets.items()}
@@ -230,7 +231,7 @@ ax[2, 0].set_ylabel("the load's consumption [MW]")
 legend = [Line2D([], [], color="k", ls=STYLE["B0"], lw=2.2, label="B0: system load; λ at B0; δ")]
 legend += [Line2D([], [], color=COLOR[b], label=f"R, {name}") for b, name in BUSINESSES.items()]
 legend += [Line2D([], [], color="grey", lw=1.2, label="capacity")]
-legend += [Line2D([], [], color="grey", ls="--", lw=1.2, label="scarcity threshold: capacity $-$ the reserve the market pays for")]
+legend += [Line2D([], [], color="grey", ls="--", lw=1.2, label="scarcity threshold")]
 legend += [Line2D([], [], color="grey", lw=0.8, label=f"t* = {scenario.peak}, the ex-ante peak hour")]
 fig.legend(handles=legend, loc="lower center", ncol=3, fontsize=8, frameon=False)
 fig.tight_layout(rect=(0, 0.05, 1, 1))
@@ -301,20 +302,19 @@ publish(tables / "table_1.tex")
 # %%
 # Table 2 (RQ1a, b). Rows: market × type × business, the inflexible left out.
 # Column groups: the layers. On reserve and investment: the alignment wedge
-# Δᵏ_t = ∂Bᵏ/∂d_t − ∂Cᵏ/∂d_t, charge less cost, over the hours where it is
-# nonzero, their count and its mean Δ̄ (positive: the load pays more at the margin
-# than it costs); recovery ρᵏ at R; fairness, everyone else's bill at R less at
+# Δᵏ_t = ∂Bᵏ/∂d_t − ∂Cᵏ/∂d_t, charge less cost, its mean Δ̄ over the scarcity
+# hours for reserve (μ_t above every offer) and over t* for investment (positive:
+# the load pays more at the margin than it costs); recovery ρᵏ at R; fairness, everyone else's bill at R less at
 # B0 (positive: others pay more once the load responds). On energy the wedge and
 # the recovery are zero under τ₀ (a marginal charge), so only fairness is shown.
 # The headers repeat across the groups; polars wants them unique, so a trailing
 # {} tells them apart, and LaTeX prints nothing for it.
 print("\nTable 2: alignment, recovery and fairness by market, type, business and layer (RQ1a, b)")
-HOURS, MEAN, RHO, FAIRNESS = r"$\#\Delta \neq 0$", r"$\bar\Delta$ [\$/MWh]", r"$\rho$ [k\$]", r"fairness [k\$]"
+MEAN, RHO, FAIRNESS = r"$\bar\Delta$ [\$/MWh]", r"$\rho$ [k\$]", r"fairness [k\$]"
 columns, groups = [], {}
 for i, k in enumerate(LAYERS_BILLED):
     tag = "{}" * i
     named = [] if k == "energy" else [
-        pl.col(f"alignment_hours_{k}").alias(HOURS + tag),
         pl.col(f"alignment_{k}").cast(pl.Float64).alias(MEAN + tag),
         (pl.col(f"recovery_{k}") / K).alias(RHO + tag),
     ]
@@ -329,13 +329,68 @@ fl.tex(table_2, tables / "table_2.tex", digits=1, groups=groups)
 publish(tables / "table_2.tex")
 
 # %%
+# The findings table: one row per claim of §4, the mover at the base
+# configuration, columns market × business, from ``rows`` and the Figure 1
+# dispatches. Generators' revenue is λᵀΣⱼuⱼ + μᵀΣⱼrⱼ. The reserve pool's
+# over-collection is −ρʳᵉˢ: the ex-ante pool billed less the realized cost.
+print("\nThe findings table: the mover by market and business")
+M = 1e6
+
+
+def money(v: float) -> str:
+    """M$ to one decimal; three where the value would print as zero."""
+    return f"{v:,.3f}" if abs(v) < 0.05 else f"{v:,.1f}"
+
+
+def revenue(x) -> float:
+    """What generators are paid: λᵀΣⱼuⱼ + μᵀΣⱼrⱼ."""
+    return float(x.lam @ x.u.sum(axis=0) + x.mu @ x.r.sum(axis=0))
+
+
+columns, groups = {}, {}
+for i, m in enumerate(MARKETS):
+    groups[m.upper()] = []
+    for b, name in BUSINESSES.items():
+        r = rows.filter(
+            (pl.col("market") == m) & (pl.col("type") == TYPE) & (pl.col("business") == b)
+        ).row(0, named=True)
+        bill = sum(r[f"bill_{k}"] - r[f"bill_b0_{k}"] for k in (*fl.LAYERS, "credit"))
+        others = sum(r[f"fairness_{k}"] for k in fl.LAYERS)
+        col = name + "{}" * i
+        groups[m.upper()].append(col)
+        columns[col] = [
+            money(r["value_of_flexibility"] / M),
+            f"{r['efficiency_share'] * 100:.1f}\\%",
+            money(bill / M),
+            money(others / M),
+            money((revenue(paths[m, "R", b]) - revenue(paths[m, "B0"])) / M),
+            money(-r["recovery_reserve"] / M),
+        ]
+table_f = pl.DataFrame(
+    {
+        "": [
+            r"flexibility value $S^{B1} - S^{B0}$ [M\$]",
+            r"lost to the tariff, $(S^{B1} - S^{R}) / (S^{B1} - S^{B0})$",
+            r"the load's bill, R less B0 [M\$]",
+            r"everyone else's bill, R less B0 [M\$]",
+            r"generators' revenue, R less B0 [M\$]",
+            r"the reserve pool over-collects, $-\rho^{\rm res}$ [M\$]",
+        ],
+        **columns,
+    }
+)
+print(table_f)
+fl.tex(table_f, tables / "table_findings.tex", groups=groups)
+publish(tables / "table_findings.tex")
+
+# %%
 # Load size. The mover at four sizes α in both markets under each business,
 # exogenous belief. Each α re-cuts the year so δ + d° stays the data.
 print("\nLoad size: alpha × market × business (RQ3)")
 t0 = time.time()
 grid = []
 for alpha in ALPHAS:
-    window = fl.windows(T=T, alpha=alpha, reserve_margin=RESERVE_MARGIN)[WEEK]
+    window = fl.windows(T=T, alpha=alpha, reserve_margin=RESERVE_MARGIN, reserve_offer=RESERVE_OFFER)[WEEK]
     tau_alpha = fl.named_tariffs(window)["tau_0"]
     for m, mk in markets.items():
         for b in BUSINESSES:
