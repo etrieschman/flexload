@@ -88,13 +88,15 @@ def fairness(
     tariff: Tariff,
     scenario: Scenario,
     responding: Dispatch,
-    planned: Dispatch,
     b0: Dispatch,
 ) -> dict[str, float]:
-    """Bᵏ(d°)|R − Bᵏ(d°)|B1: how everyone else's bill moves when the load plays R instead of B1."""
+    """Bᵏ(d°)|R − Bᵏ(d°)|B0: how everyone else's bill moves when the load
+    responds, against the bill before it did. Positive: others pay more.
+    (Erich, 2026-10-23: against B0, not B1; the planner never holds the
+    flexibility, and R against B1 is efficiency.)"""
     at_r = settle(tariff, scenario, responding, b0, own=False)
-    at_b1 = settle(tariff, scenario, planned, b0, own=False)
-    return {k: at_r[k] - at_b1[k] for k in LAYERS}
+    at_b0 = settle(tariff, scenario, b0, b0, own=False)
+    return {k: at_r[k] - at_b0[k] for k in LAYERS}
 
 
 # ----------------------------------------------------------------------------
@@ -138,10 +140,10 @@ def summary(
     b1: tuple | None = None,
 ) -> dict:
     """One row: welfare at B0, B1 and R, efficiency and its share of the value
-    of flexibility, the bill by layer at B0, R and B1, Δᵏ_t at R, signed: its
-    mean over the hours, the count of hours where it is nonzero, and its 1st and
-    99th percentiles over those hours (the wedge lives in the scarcity hours, so
-    percentiles over all hours land on zero), recovery at R and B1, fairness, the
+    of flexibility, the bill by layer at B0, R and B1, Δᵏ_t at R, signed, over
+    the hours where it is nonzero: their count, and its mean, 1st and 99th
+    percentiles over them (the wedge lives in the scarcity hours; over all hours
+    the mean is diluted and the percentiles land on zero), recovery at R and B1, fairness (others' bill, R − B0), the
     belief's price error, and the fixed point's iterations and last change.
     ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if already solved.
     S is read from a clearing at each of the three bids."""
@@ -152,14 +154,14 @@ def summary(
     )
     bill, bill_b0, bill_b1 = (settle(tariff, scenario, x, b0) for x in (dispatch, b0, planned))
     rho, rho_b1 = (recovery(tariff, scenario, x, b0) for x in (dispatch, planned))
-    fair = fairness(tariff, scenario, dispatch, planned, b0)
+    fair = fairness(tariff, scenario, dispatch, b0)
     wedge = alignment(tariff, market, scenario, dispatch, b0)
     align = {}
     for k in LAYERS:
         w = wedge.filter(pl.col("layer") == k)["wedge"].to_numpy()
         nonzero = w[np.abs(w) > 1e-6]
-        align[f"alignment_{k}"] = float(w.mean())
         align[f"alignment_hours_{k}"] = int(nonzero.size)
+        align[f"alignment_{k}"] = float(nonzero.mean()) if nonzero.size else None
         align[f"alignment_p1_{k}"] = float(np.percentile(nonzero, 1)) if nonzero.size else None
         align[f"alignment_p99_{k}"] = float(np.percentile(nonzero, 99)) if nonzero.size else None
     S_B0, S_R, S_B1 = (
@@ -217,11 +219,17 @@ def table(
 # ----------------------------------------------------------------------------
 # a table for the report
 # ----------------------------------------------------------------------------
-def tex(table: pl.DataFrame, path: str | Path, digits: int = 0) -> None:
+def tex(
+    table: pl.DataFrame,
+    path: str | Path,
+    digits: int = 0,
+    groups: dict[str, list[str]] | None = None,
+) -> None:
     """Write ``table`` as a booktabs ``tabular`` for ``\\input`` inside a table
     environment the document controls. Column names are the headers, written as
     given; floats get ``digits`` decimals, integers none, both thousands
-    separators; nulls print as --."""
+    separators; nulls print as --. ``groups`` maps a header that spans several
+    adjacent columns to their names; it adds a first header row with the spans."""
 
     def cell(v) -> str:
         if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -231,10 +239,22 @@ def tex(table: pl.DataFrame, path: str | Path, digits: int = 0) -> None:
         return f"{v:,d}" if isinstance(v, int) else str(v)
 
     align = "".join("r" if dt.is_numeric() else "l" for dt in table.dtypes)
+    header = [" & ".join(table.columns) + r" \\"]
+    if groups:
+        cols, cells, rules = list(table.columns), [""] * table.width, []
+        for name, members in groups.items():
+            idx = [cols.index(c) for c in members]
+            a, b = min(idx), max(idx)
+            if idx != list(range(a, b + 1)):
+                raise ValueError(f"group {name!r} must span adjacent columns")
+            cells[a] = rf"\multicolumn{{{b - a + 1}}}{{c}}{{{name}}}"
+            cells[a + 1 : b + 1] = [None] * (b - a)
+            rules.append(rf"\cmidrule(lr){{{a + 1}-{b + 1}}}")
+        header = [" & ".join(c for c in cells if c is not None) + r" \\", " ".join(rules), *header]
     lines = [
         rf"\begin{{tabular}}{{@{{}}{align}@{{}}}}",
         r"\toprule",
-        " & ".join(table.columns) + r" \\",
+        *header,
         r"\midrule",
         *(" & ".join(cell(v) for v in row) + r" \\" for row in table.iter_rows()),
         r"\bottomrule",

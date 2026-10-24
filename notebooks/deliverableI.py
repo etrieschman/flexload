@@ -8,14 +8,14 @@
 #
 # | exhibit | moves | question |
 # |---|---|---|
-# | Figure 0 | week | the market: the supply stack and the pools by week under B0 |
-# | Figure 1 | market, business | the window: λ and consumption at B0, R and B1 |
-# | Table 1 | market, type, business | RQ1a: value of flexibility, efficiency, bill change by layer |
-# | Table 2 | market, type, business, layer | RQ1a, b: alignment, recovery at R and B1, fairness |
-# | Figure 2 | α, market, business | RQ3a: efficiency and fairness against load size |
-# | Table 3 | α, market | RQ3b: the consistent price-taker's fixed point, training data center |
+# | Figure 0 | week | the market: the supply stack (`genstack`) and the pools by week under B0 (`pools`) |
+# | Figure 1 | market, business | the window: λ and consumption at B0, R and B1; system load against capacity and the market's scarcity line |
+# | Table 1 | market, type, business | RQ1a: flexibility value, efficiency, bill change B0 → R by layer |
+# | Table 2 | market, type, business | RQ1a, b: alignment, recovery and fairness by layer |
+# | Table 3 | α, market, business | RQ3: flexibility value, efficiency and fairness by layer against load size |
 #
-# Beliefs move only in Table 3 (RQ4 is about beliefs). Run as a script,
+# Beliefs do not move: every exhibit is the exogenous price-taker (RQ4 is about
+# beliefs; the consistent price-taker's table was dropped 2026-10-23). Run as a script,
 # `uv run python notebooks/deliverableI.py`, or cell by cell. Figures go to
 # `notebooks/figures`, tables to `notebooks/tables` as booktabs for `\input`;
 # with `FLEXLOAD_OUT` set (in the environment or in `.env` at the repo root)
@@ -50,12 +50,12 @@ T = 168
 WEEK = 32  # the window: the year's tightest hour is in it
 ALPHA = 0.05
 RESERVE_MARGIN = 0.15
-TYPE = "mover"  # the type Figures 1 and 2 and Table 3 follow
+TYPE = "mover"  # the type Figure 1 and Table 3 follow
 BUSINESSES = {"data_center_train": "training DC", "bitcoin_mine": "bitcoin mine"}
 MARKETS = ("ercot", "pjm")
 ALPHAS = (0.01, 0.05, 0.10, 0.20)
 SWEPT = ("mover", "controllable", "curtailable")  # the types whose (ψ, β, A) the business sets
-LAYERS_BILLED = ("reserve", "investment")  # energy is at the margin: Δ = 0 by construction
+LAYERS_BILLED = fl.LAYERS  # energy too: its wedge is zero at the margin, but others' energy bill moves
 K = 1e3  # dollars per k$
 here = Path(__file__).parent if "__file__" in globals() else Path(".")
 figures, tables = here / "figures", here / "tables"
@@ -79,7 +79,12 @@ def publish(path: Path) -> None:
 
 
 percent = lambda col: (pl.col(col) * 100).round().cast(pl.Int64)  # noqa: E731
-COLOR = {"ercot": "C3", "pjm": "C0", "data_center_train": "C1", "bitcoin_mine": "C2"}
+DAMBLUE, FTRORANGE, CAPPLUM = "#1F4E79", "#BF5700", "#703078"  # the report's colors
+SLATELT, INK = "#96A0AA", "#262C34"
+COLOR = {"data_center_train": DAMBLUE, "bitcoin_mine": FTRORANGE}  # business: one hue everywhere
+POOL = {"energy": SLATELT, "reserve": CAPPLUM, "investment": INK}  # the pools, where no business applies
+
+
 STYLE = {"B0": ":", "R": "-", "B1": "--"}
 
 # %%
@@ -141,43 +146,54 @@ for m, mk in markets.items():
     pools[m] = pl.DataFrame(rows)
 print(f"B0 over the year, both markets [s]:\t{time.time() - t0:.0f}")
 
-fig, ax = plt.subplots(1, 3, figsize=(15, 4.5), gridspec_kw={"width_ratios": [1.3, 1, 1]})
+fig, a0 = plt.subplots(figsize=(7, 4.5))
 colors = [FUEL_COLOR.get(f, "#999999") for f in fuel[order]]
-ax[0].bar(left, scenario.cost_gen[order], width=avg_capacity[order], align="edge", color=colors, edgecolor="none")
+a0.bar(left, scenario.cost_gen[order], width=avg_capacity[order], align="edge", color=colors, edgecolor="none")
 free = scenario.cost_gen[order] <= 0.0  # zero-cost units: a strip below the axis, so they show
-ax[0].bar(left[free], -4.0, width=avg_capacity[order][free], align="edge", color=np.array(colors)[free], edgecolor="none")
-ax[0].axhline(0.0, color="k", lw=0.5)
-ax[0].axvline(d_sys_year.mean(), color="k", lw=1, label=f"average load {d_sys_year.mean():,.0f} MW")
-ax[0].axvline(d_sys_year.max(), color="k", lw=1, ls="--", label=f"peak load {d_sys_year.max():,.0f} MW")
-ax[0].set_xlabel("cumulative capacity, average hour [MW]; zero-cost units drawn below the axis")
-ax[0].set_ylabel("marginal cost [$/MWh]")
-ax[0].set_title("supply stack")
+a0.bar(left[free], -4.0, width=avg_capacity[order][free], align="edge", color=np.array(colors)[free], edgecolor="none")
+a0.axhline(0.0, color="k", lw=0.5)
+a0.axvline(d_sys_year.mean(), color="k", lw=1, label=f"average load {d_sys_year.mean():,.0f} MW")
+a0.axvline(d_sys_year.max(), color="k", lw=1, ls="--", label=f"peak load {d_sys_year.max():,.0f} MW")
+a0.set_xlabel("cumulative capacity, average hour [MW]; zero-cost units drawn below the axis")
+a0.set_ylabel("marginal cost [$/MWh]")
 handles = [plt.Rectangle((0, 0), 1, 1, color=c) for f, c in FUEL_COLOR.items() if f in set(fuel)]
-handles += ax[0].get_legend_handles_labels()[0]
-labels = [f for f in FUEL_COLOR if f in set(fuel)] + ax[0].get_legend_handles_labels()[1]
-ax[0].legend(handles, labels, fontsize=8, ncol=2)
-for a, m in zip(ax[1:], MARKETS):
+handles += a0.get_legend_handles_labels()[0]
+labels = [f for f in FUEL_COLOR if f in set(fuel)] + a0.get_legend_handles_labels()[1]
+a0.legend(handles, labels, fontsize=8, ncol=2)
+fig.tight_layout()
+fig.savefig(figures / "figure_0_genstack.png", dpi=150)
+publish(figures / "figure_0_genstack.png")
+
+fig, ax = plt.subplots(1, 2, figsize=(11, 4.5))  # own scales: ERCOT's scarcity weeks are ten times PJM's
+for a, m in zip(ax, MARKETS):
     p = pools[m]
-    a.bar(p["week"], p["energy"] / 1e6, label="energy pool", color="#bbbbbb")
-    a.bar(p["week"], p["reserve"] / 1e6, bottom=p["energy"] / 1e6, label="reserve pool", color="#1f78b4")
+    a.bar(p["week"], p["energy"] / 1e6, label="energy pool", color=POOL["energy"])
+    a.bar(p["week"], p["reserve"] / 1e6, bottom=p["energy"] / 1e6, label="reserve pool", color=POOL["reserve"])
     a.bar(p["week"], p["investment"] / 1e6, bottom=(p["energy"] + p["reserve"]) / 1e6,
-          label=r"investment pool, the window's share $C^{inv}\,T/8760$", color="#444444")
+          label=r"investment pool $C^{inv}\,T/8760$", color=POOL["investment"])
     a.axvline(WEEK, color="k", lw=0.5, alpha=0.5)
     pool_week = markets[m].C_inv * T / 8760 / 1e6
-    a.set_title(f"pools by week under B0, {m.upper()}" + (" (investment pool = 0)" if pool_week < 0.5 else ""))
+    a.set_title(m.upper())
     a.set_xlabel("week of the year")
-    a.set_ylabel("M$ per week")
-fig.legend(*ax[2].get_legend_handles_labels(), loc="lower center", ncol=3, fontsize=8, frameon=False)
+    a.set_ylim(0, 1.08 * float((p["energy"] + p["reserve"] + p["investment"]).max()) / 1e6)
+ax[0].set_ylabel("pools by week under B0 [M$ per week]")
+fig.legend(*ax[1].get_legend_handles_labels(), loc="lower center", ncol=3, fontsize=8, frameon=False)
 fig.tight_layout(rect=(0, 0.07, 1, 1))
-fig.savefig(figures / "figure_0_market.png", dpi=150)
-publish(figures / "figure_0_market.png")
+fig.savefig(figures / "figure_0_pools.png", dpi=150)
+publish(figures / "figure_0_pools.png")
 
 # %%
-# Figure 1, the window. Rows: the energy price λ and the load's consumption.
-# Columns: the markets. Lines: B0 (dotted, black), R (solid) and B1 (dashed)
-# for the mover run as a training data center and as a bitcoin mine. λ is
-# clipped at 75 $/MWh (ERCOT's scarcity hours reach the thousands). The grey
-# line marks t*, the ex-ante peak hour where τ₀ bills the investment pool.
+# Figure 1, the window. Rows: the energy price λ, the load's consumption, and
+# the system load at B0 against capacity and the market's scarcity line,
+# capacity less the reserve the market pays for: under ERCOT load-following
+# γ d_sys plus the width of the demand curve, under PJM the largest unit plus
+# load-following. Load above the line and the market prices scarcity. The
+# response moves system load by at most βα, invisible at this scale, so the
+# row shows B0 only. Columns: the markets. Lines: B0 (dotted, black), R (solid)
+# and B1 (dashed) for the mover run as a training data center and as a bitcoin
+# mine. λ is shown from 20 to 40 $/MWh (ERCOT's scarcity hours reach the
+# thousands). The grey line marks t*, the ex-ante peak hour where τ₀ bills the
+# investment pool.
 print(f"\nFigure 1: week {WEEK} at B0, R and B1 by market and business")
 t0 = time.time()
 paths = {}
@@ -193,10 +209,19 @@ for m, mk in markets.items():
         paths[m, "B1", b] = mk.clear(scenario, d1, s1, offer, d_firm)
 print(f"time [s]:\t{time.time() - t0:.0f}")
 
-fig, ax = plt.subplots(2, 2, figsize=(13, 7), sharex=True, sharey="row")
+capacity = scenario.capacity.sum(axis=0)
+ordc = markets["ercot"].ordc_for(scenario)
+reserve_priced = {  # the reserve the market pays for; load above capacity less this and it prices scarcity
+    "ercot": markets["ercot"].gamma * scenario.d_sys + ordc.widths[ordc.prices > 0].sum(),
+    "pjm": scenario.capacity.max(axis=0) + markets["pjm"].gamma * scenario.d_sys,
+}
+fig, ax = plt.subplots(3, 2, figsize=(13, 10), sharex=True, sharey="row")
 for j, m in enumerate(MARKETS):
-    ax[0, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"], lw=1.2)
-    ax[1, j].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=1.2)
+    ax[0, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"], lw=2.2)
+    ax[1, j].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=2.2)
+    ax[2, j].plot(scenario.d_sys, color="k", ls=STYLE["B0"], lw=2.2)
+    ax[2, j].plot(capacity, color="grey", lw=1.2)
+    ax[2, j].plot(capacity - reserve_priced[m], color="grey", ls="--", lw=1.2)
     for b in BUSINESSES:
         for path in ("R", "B1"):
             x = paths[m, path, b]
@@ -205,16 +230,19 @@ for j, m in enumerate(MARKETS):
     for a in ax[:, j]:
         a.axvline(scenario.peak, color="grey", lw=0.8)
     ax[0, j].set_title(m.upper())
-    ax[1, j].set_xlabel(f"hour of week {WEEK}")
-ax[0, 0].set_ylim(0, 75)
-ax[0, 0].set_ylabel("energy price λ [$/MWh], clipped at 75")
+    ax[2, j].set_xlabel(f"hour of week {WEEK}")
+ax[0, 0].set_ylim(20, 40)
+ax[0, 0].set_ylabel("energy price λ [$/MWh], 20 to 40 shown")
 ax[1, 0].set_ylabel("the load's consumption [MW]")
-legend = [Line2D([], [], color="k", ls=STYLE["B0"], label="B0 (λ at B0; δ)")]
+ax[2, 0].set_ylabel("system load at B0 [MW]")
+legend = [Line2D([], [], color="k", ls=STYLE["B0"], label="B0 (λ at B0; δ; system load)")]
 legend += [Line2D([], [], color=COLOR[b], label=name) for b, name in BUSINESSES.items()]
 legend += [Line2D([], [], color="k", ls=STYLE[p], label=p) for p in ("R", "B1")]
 legend += [Line2D([], [], color="grey", lw=0.8, label=f"t* = {scenario.peak}, the ex-ante peak hour")]
-ax[0, 1].legend(handles=legend, fontsize=8)
-fig.tight_layout()
+legend += [Line2D([], [], color="grey", lw=1.2, label="capacity")]
+legend += [Line2D([], [], color="grey", ls="--", lw=1.2, label="scarcity line: capacity $-$ the reserve the market pays for (ERCOT: γ d_sys + the curve's width; PJM: the largest unit + γ d_sys)")]
+fig.legend(handles=legend, loc="lower center", ncol=3, fontsize=8, frameon=False)
+fig.tight_layout(rect=(0, 0.05, 1, 1))
 fig.savefig(figures / f"figure_1_week{WEEK}.png", dpi=150)
 publish(figures / f"figure_1_week{WEEK}.png")
 
@@ -246,62 +274,75 @@ print(f"time [s]:\t{time.time() - t0:.0f}")
 rows.write_csv(tables / "rows_type_business.csv")
 
 # %%
-# Table 1 (RQ1a). Rows: market × type × business. Columns: the value of
-# flexibility S^B1 − S^B0, efficiency S^B1 − S^R, efficiency as a share of that
-# value, and the bill change from B0 to R by layer.
+# Table 1 (RQ1a). Rows: market × type × business, the inflexible left out (its
+# row is zero). Columns: the flexibility
+# value S^B1 − S^B0, with its share of the load's bill at B0 in parentheses (S^B0
+# is negative under PJM, so it is no base); efficiency S^B1 − S^R with its share
+# of that value; the load's bill change from B0 to R by layer. The bill change is
+# not the welfare change: the price falls on everything the load still buys,
+# a transfer from generators, and the bill is priced at B0's λ while the
+# system saves the area under a falling marginal cost.
 print("\nTable 1: response to tau_0 by market, type and business (RQ1a)")
-table_1 = label(rows.sort("market", "type", "business")).select(
+BILL_CHANGE = {k: k for k in (*fl.LAYERS, "credit")}  # the bill change from B0 to R, by layer
+bill_b0_total = pl.sum_horizontal([pl.col(f"bill_b0_{k}") for k in (*fl.LAYERS, "credit")])  # the share's base
+FLEXIBILITY = (
+    pl.struct(v=pl.col("value_of_flexibility") / K, s=pl.col("value_of_flexibility") / bill_b0_total * 100)
+    .map_elements(lambda r: f"{r['v']:,.1f} ({r['s']:.1f}\\%)", return_dtype=pl.String)
+    .alias(r"flexibility value [k\$ (\%)]")
+)
+EFFICIENCY = (
+    pl.struct(v=pl.col("efficiency") / K, s=percent("efficiency_share").fill_null(0))
+    .map_elements(lambda r: f"{r['v']:,.1f} ({r['s']}\\%)", return_dtype=pl.String)
+    .alias(r"efficiency [k\$ (\%)]")
+)
+table_1 = label(rows.filter(pl.col("type") != "inflexible").sort("market", "type", "business")).select(
     "market",
     "type",
     "business",
-    (pl.col("value_of_flexibility") / K).alias(r"$S^{B1} - S^{B0}$ [k\$]"),
-    (pl.col("efficiency") / K).alias(r"$S^{B1} - S^{R}$ [k\$]"),
-    percent("efficiency_share").alias(r"share [\%]"),
-    *[
-        ((pl.col(f"bill_{k}") - pl.col(f"bill_b0_{k}")) / K).alias(rf"$\Delta B^{{\rm {s}}}$ [k\$]")
-        for k, s in zip((*fl.LAYERS, "credit"), ("energy", "res", "inv", "credit"))
-    ],
+    FLEXIBILITY,
+    EFFICIENCY,
+    *[((pl.col(f"bill_{k}") - pl.col(f"bill_b0_{k}")) / K).alias(name) for k, name in BILL_CHANGE.items()],
 )
 print(table_1)
-fl.tex(table_1, tables / "table_1.tex", digits=1)
+fl.tex(table_1, tables / "table_1.tex", digits=1, groups={r"bill change [k\$]": list(BILL_CHANGE.values())})
 publish(tables / "table_1.tex")
 
 # %%
-# Table 2 (RQ1a, b). Rows: market × type × business × layer, reserve and
-# investment (energy is at the margin, so its wedge is zero). Columns: the
-# alignment wedge Δᵏ_t, its mean over the week's hours, the hours where it is
-# nonzero, and its 1st and 99th percentiles over those hours; recovery ρᵏ at R
-# and at B1; fairness.
+# Table 2 (RQ1a, b). Rows: market × type × business, the inflexible left out.
+# Column groups: the layers. On reserve and investment: the alignment wedge
+# Δᵏ_t = ∂Bᵏ/∂d_t − ∂Cᵏ/∂d_t, charge less cost, over the hours where it is
+# nonzero, their count and its mean Δ̄ (positive: the load pays more at the margin
+# than it costs); recovery ρᵏ at R; fairness, everyone else's bill at R less at
+# B0 (positive: others pay more once the load responds). On energy the wedge and
+# the recovery are zero under τ₀ (a marginal charge), so only fairness is shown.
+# The headers repeat across the groups; polars wants them unique, so a trailing
+# {} tells them apart, and LaTeX prints nothing for it.
 print("\nTable 2: alignment, recovery and fairness by market, type, business and layer (RQ1a, b)")
-table_2 = pl.concat(
-    [
-        label(rows.filter(pl.col("type") != "inflexible").sort("market", "type", "business")).select(
-            "market",
-            "type",
-            "business",
-            pl.lit(k).alias("layer"),
-            pl.col(f"alignment_{k}").alias(r"mean $\Delta^k_t$ [\$/MWh]"),
-            pl.col(f"alignment_hours_{k}").alias(r"hours $\Delta^k_t \neq 0$"),
-            pl.col(f"alignment_p1_{k}").alias(r"p1 of those [\$/MWh]"),
-            pl.col(f"alignment_p99_{k}").alias(r"p99 of those [\$/MWh]"),
-            (pl.col(f"recovery_{k}") / K).alias(r"$\rho^k$ at R [k\$]"),
-            (pl.col(f"recovery_b1_{k}") / K).alias(r"$\rho^k$ at B1 [k\$]"),
-            (pl.col(f"fairness_{k}") / K).alias(r"fairness [k\$]"),
-        )
-        for k in LAYERS_BILLED
+HOURS, MEAN, RHO, FAIRNESS = r"$\#\Delta \neq 0$", r"$\bar\Delta$ [\$/MWh]", r"$\rho$ [k\$]", r"fairness [k\$]"
+columns, groups = [], {}
+for i, k in enumerate(LAYERS_BILLED):
+    tag = "{}" * i
+    named = [] if k == "energy" else [
+        pl.col(f"alignment_hours_{k}").alias(HOURS + tag),
+        pl.col(f"alignment_{k}").cast(pl.Float64).alias(MEAN + tag),
+        (pl.col(f"recovery_{k}") / K).alias(RHO + tag),
     ]
-).sort("market", "type", "business", "layer")
+    named.append((pl.col(f"fairness_{k}") / K).alias(FAIRNESS + tag))
+    columns += named
+    groups[k] = [c.meta.output_name() for c in named]
+table_2 = label(rows.filter(pl.col("type") != "inflexible").sort("market", "type", "business")).select(
+    "market", "type", "business", *columns
+)
 print(table_2)
-fl.tex(table_2, tables / "table_2.tex", digits=1)
+fl.tex(table_2, tables / "table_2.tex", digits=1, groups=groups)
 publish(tables / "table_2.tex")
 
 # %%
 # Load size. The mover at four sizes α in both markets under each business,
-# exogenous belief; and the consistent price-taker's fixed point for the
-# training data center. Each α re-cuts the year so δ + d° stays the data.
+# exogenous belief. Each α re-cuts the year so δ + d° stays the data.
 print("\nLoad size: alpha × market × business (RQ3)")
 t0 = time.time()
-grid, cycle = [], []
+grid = []
 for alpha in ALPHAS:
     window = fl.windows(T=T, alpha=alpha, reserve_margin=RESERVE_MARGIN)[WEEK]
     tau_alpha = fl.named_tariffs(window)["tau_0"]
@@ -310,62 +351,25 @@ for alpha in ALPHAS:
             theta = types[b][TYPE]
             b1 = fl.planner(theta, mk, window)
             grid.append({"alpha": alpha, "business": b, **fl.summary(theta, tau_alpha, mk, window, "exogenous", b1)})
-            if b == first:
-                cycle.append({"alpha": alpha, **fl.summary(theta, tau_alpha, mk, window, "consistent", b1)})
 grid = pl.DataFrame(grid).with_columns(pl.col("market").cast(pl.Enum(list(MARKETS))))
-cycle = pl.DataFrame(cycle).with_columns(pl.col("market").cast(pl.Enum(list(MARKETS))))
 print(f"time [s]:\t{time.time() - t0:.0f}")
 grid.write_csv(tables / "rows_alpha.csv")
-cycle.write_csv(tables / "rows_alpha_consistent.csv")
 
 # %%
-# Figure 2 (RQ3a). α against efficiency S^B1 − S^R and fairness summed over
-# layers. Color: market. Line style: business.
-# Efficiency is in k$, not as a share: under PJM the value of flexibility is
-# near zero at every α, so the share is in the hundreds and says nothing.
-print("\nFigure 2: load size against price error, efficiency share and fairness (RQ3a)")
-BUSINESS_STYLE = dict(zip(BUSINESSES, ("-", "--")))
-panels = (
-    ("efficiency", r"efficiency $S^{B1} - S^R$ [k\$]", K),
-    ("fairness_total", r"fairness, all layers [k\$]", K),
-)
-grid = grid.with_columns(pl.sum_horizontal([pl.col(f"fairness_{k}") for k in fl.LAYERS]).alias("fairness_total"))
-fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-for a, (col, name, scale) in zip(ax, panels):
-    for m in MARKETS:
-        for b in BUSINESSES:
-            g = grid.filter((pl.col("market") == m) & (pl.col("business") == b)).sort("alpha")
-            a.plot(g["alpha"] * 100, g[col] / scale, color=COLOR[m], ls=BUSINESS_STYLE[b], marker="o", ms=3)
-    a.set_xlabel(r"load size $\alpha$ [% of system load]")
-    a.set_ylabel(name)
-    a.set_xticks([x * 100 for x in ALPHAS])
-legend = [Line2D([], [], color=COLOR[m], label=m.upper()) for m in MARKETS]
-legend += [Line2D([], [], color="k", ls=BUSINESS_STYLE[b], label=n) for b, n in BUSINESSES.items()]
-ax[0].legend(handles=legend, fontsize=8)
-fig.tight_layout()
-fig.savefig(figures / "figure_2_alpha.png", dpi=150)
-publish(figures / "figure_2_alpha.png")
-
-# %%
-# Table 3 (RQ3b). Rows: α by market, the training data center. Columns: the
-# fixed point's rounds and last change, S^R under each belief, each belief's
-# price error. A last change above 1 MW is the cycle of finding 1.
-print("\nTable 3: the consistent price-taker by load size and market (RQ3b)")
-exogenous = grid.filter(pl.col("business") == first)
-table_3 = (
-    exogenous.join(cycle, on=["alpha", "market"], suffix="_c")
-    .sort("alpha", "market")
-    .select(
-        percent("alpha").alias(r"$\alpha$ [\%]"),
-        "market",
-        pl.col("iterations_c").alias("rounds"),
-        pl.col("last_change_c").alias("last change [MW]"),
-        (pl.col("S_R") / K).alias(r"$S^R$ exogenous [k\$]"),
-        (pl.col("S_R_c") / K).alias(r"$S^R$ consistent [k\$]"),
-        pl.col("price_error").alias(r"price error, exogenous [\$/MWh]"),
-        pl.col("price_error_c").alias(r"price error, consistent [\$/MWh]"),
-    )
+# Table 3 (RQ3). Rows: market × α × business, the mover. Columns: the
+# flexibility value and efficiency with their shares, as in Table 1; fairness
+# by layer. Under ERCOT the response removes the scarcity prices and everyone
+# else's energy bill falls by tens of M$, a hundred times the other layers;
+# under PJM the investment layer carries the change.
+print("\nTable 3: load size against flexibility value, efficiency and fairness (RQ3)")
+table_3 = label(grid.sort("market", "alpha", "business")).select(
+    "market",
+    (pl.col("alpha") * 100).cast(pl.Int64).alias(r"$\alpha$ [\%]"),
+    "business",
+    FLEXIBILITY,
+    EFFICIENCY,
+    *[(pl.col(f"fairness_{k}") / K).alias(k) for k in fl.LAYERS],
 )
 print(table_3)
-fl.tex(table_3, tables / "table_3.tex", digits=1)
+fl.tex(table_3, tables / "table_3.tex", digits=1, groups={r"fairness [k\$]": list(fl.LAYERS)})
 publish(tables / "table_3.tex")
