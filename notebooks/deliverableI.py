@@ -9,7 +9,7 @@
 # | exhibit | moves | question |
 # |---|---|---|
 # | Figure 0 | week | the market: the supply stack (`genstack`) and the pools by week under B0 (`pools`) |
-# | Figure 1 | market, business | the window: λ and consumption at B0, R and B1; system load against capacity and the market's scarcity line |
+# | Figure 1 | market, business | the window: system load against capacity and the scarcity threshold; λ and consumption at B0 and R |
 # | Table 1 | market, type, business | RQ1a: flexibility value, efficiency, bill change B0 → R by layer |
 # | Table 2 | market, type, business | RQ1a, b: alignment, recovery and fairness by layer |
 # | Table 3 | α, market, business | RQ3: flexibility value, efficiency and fairness by layer against load size |
@@ -85,7 +85,7 @@ COLOR = {"data_center_train": DAMBLUE, "bitcoin_mine": FTRORANGE}  # business: o
 POOL = {"energy": SLATELT, "reserve": CAPPLUM, "investment": INK}  # the pools, where no business applies
 
 
-STYLE = {"B0": ":", "R": "-", "B1": "--"}
+STYLE = {"B0": "-", "R": "-"}
 
 # %%
 # The environment: the year in weeks under one tightness scale, the two markets
@@ -183,30 +183,23 @@ fig.savefig(figures / "figure_0_pools.png", dpi=150)
 publish(figures / "figure_0_pools.png")
 
 # %%
-# Figure 1, the window. Rows: the energy price λ, the load's consumption, and
-# the system load at B0 against capacity and the market's scarcity line,
-# capacity less the reserve the market pays for: under ERCOT load-following
-# γ d_sys plus the width of the demand curve, under PJM the largest unit plus
-# load-following. Load above the line and the market prices scarcity. The
-# response moves system load by at most βα, invisible at this scale, so the
-# row shows B0 only. Columns: the markets. Lines: B0 (dotted, black), R (solid)
-# and B1 (dashed) for the mover run as a training data center and as a bitcoin
-# mine. λ is shown from 20 to 40 $/MWh (ERCOT's scarcity hours reach the
-# thousands). The grey line marks t*, the ex-ante peak hour where τ₀ bills the
-# investment pool.
-print(f"\nFigure 1: week {WEEK} at B0, R and B1 by market and business")
+# Figure 1, the window. Rows: the system load at B0 against capacity and the
+# scarcity threshold, capacity less the reserve the market pays for (under
+# ERCOT load-following γ d_sys plus the width of the demand curve, under PJM
+# the largest unit plus load-following; load above it and the market prices
+# scarcity; the response moves system load by at most βα, invisible at this
+# scale, so B0 only); the energy price λ; the load's consumption. Columns: the
+# markets. Lines: B0 (black) and R for the mover run as a training data center
+# and as a bitcoin mine. λ is shown from 20 to 40 $/MWh (ERCOT's scarcity hours
+# reach the thousands). The grey line marks t*, the ex-ante peak hour where τ₀
+# bills the investment pool.
+print(f"\nFigure 1: week {WEEK} at B0 and R by market and business")
 t0 = time.time()
 paths = {}
 for m, mk in markets.items():
-    b0 = mk.clear(scenario, scenario.delta, np.zeros(T), np.zeros(T))
-    paths[m, "B0"] = b0
+    paths[m, "B0"] = mk.clear(scenario, scenario.delta, np.zeros(T), np.zeros(T))
     for b in BUSINESSES:
-        theta = types[b][TYPE]
-        offer, d_firm = fl.c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta)
-        dispatch, _, _, _ = fl.respond(theta, tau, mk, scenario, "exogenous")
-        d1, s1 = fl.planner(theta, mk, scenario)
-        paths[m, "R", b] = dispatch
-        paths[m, "B1", b] = mk.clear(scenario, d1, s1, offer, d_firm)
+        paths[m, "R", b], _, _, _ = fl.respond(types[b][TYPE], tau, mk, scenario, "exogenous")
 print(f"time [s]:\t{time.time() - t0:.0f}")
 
 capacity = scenario.capacity.sum(axis=0)
@@ -217,30 +210,28 @@ reserve_priced = {  # the reserve the market pays for; load above capacity less 
 }
 fig, ax = plt.subplots(3, 2, figsize=(13, 10), sharex=True, sharey="row")
 for j, m in enumerate(MARKETS):
-    ax[0, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"], lw=2.2)
-    ax[1, j].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=2.2)
-    ax[2, j].plot(scenario.d_sys, color="k", ls=STYLE["B0"], lw=2.2)
-    ax[2, j].plot(capacity, color="grey", lw=1.2)
-    ax[2, j].plot(capacity - reserve_priced[m], color="grey", ls="--", lw=1.2)
+    ax[0, j].plot(scenario.d_sys, color="k", ls=STYLE["B0"], lw=2.2)
+    ax[0, j].plot(capacity, color="grey", lw=1.2)
+    ax[0, j].plot(capacity - reserve_priced[m], color="grey", ls="--", lw=1.2)
+    ax[1, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"], lw=2.2)
+    ax[2, j].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=2.2)
     for b in BUSINESSES:
-        for path in ("R", "B1"):
-            x = paths[m, path, b]
-            ax[0, j].plot(x.lam, color=COLOR[b], ls=STYLE[path], lw=0.9, alpha=0.6)
-            ax[1, j].plot(x.d, color=COLOR[b], ls=STYLE[path], lw=0.9, alpha=0.6)
+        x = paths[m, "R", b]
+        ax[1, j].plot(x.lam, color=COLOR[b], ls=STYLE["R"], lw=1.2, alpha=0.9)
+        ax[2, j].plot(x.d, color=COLOR[b], ls=STYLE["R"], lw=1.2, alpha=0.9)
     for a in ax[:, j]:
         a.axvline(scenario.peak, color="grey", lw=0.8)
     ax[0, j].set_title(m.upper())
     ax[2, j].set_xlabel(f"hour of week {WEEK}")
-ax[0, 0].set_ylim(20, 40)
-ax[0, 0].set_ylabel("energy price λ [$/MWh], 20 to 40 shown")
-ax[1, 0].set_ylabel("the load's consumption [MW]")
-ax[2, 0].set_ylabel("system load at B0 [MW]")
-legend = [Line2D([], [], color="k", ls=STYLE["B0"], label="B0 (λ at B0; δ; system load)")]
-legend += [Line2D([], [], color=COLOR[b], label=name) for b, name in BUSINESSES.items()]
-legend += [Line2D([], [], color="k", ls=STYLE[p], label=p) for p in ("R", "B1")]
-legend += [Line2D([], [], color="grey", lw=0.8, label=f"t* = {scenario.peak}, the ex-ante peak hour")]
+ax[0, 0].set_ylabel("system load, capacity and reserve [MW]")
+ax[1, 0].set_ylim(20, 40)
+ax[1, 0].set_ylabel("energy price λ [$/MWh], 20 to 40 shown")
+ax[2, 0].set_ylabel("the load's consumption [MW]")
+legend = [Line2D([], [], color="k", ls=STYLE["B0"], lw=2.2, label="B0: system load; λ at B0; δ")]
+legend += [Line2D([], [], color=COLOR[b], label=f"R, {name}") for b, name in BUSINESSES.items()]
 legend += [Line2D([], [], color="grey", lw=1.2, label="capacity")]
-legend += [Line2D([], [], color="grey", ls="--", lw=1.2, label="scarcity line: capacity $-$ the reserve the market pays for (ERCOT: γ d_sys + the curve's width; PJM: the largest unit + γ d_sys)")]
+legend += [Line2D([], [], color="grey", ls="--", lw=1.2, label="scarcity threshold: capacity $-$ the reserve the market pays for")]
+legend += [Line2D([], [], color="grey", lw=0.8, label=f"t* = {scenario.peak}, the ex-ante peak hour")]
 fig.legend(handles=legend, loc="lower center", ncol=3, fontsize=8, frameon=False)
 fig.tight_layout(rect=(0, 0.05, 1, 1))
 fig.savefig(figures / f"figure_1_week{WEEK}.png", dpi=150)
