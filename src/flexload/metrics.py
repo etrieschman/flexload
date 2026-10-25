@@ -64,9 +64,14 @@ def recovery(
 
 
 def rent(scenario: Scenario, dispatch: Dispatch) -> float:
-    """The fleet's capacity rent over the window, Σ_j Σ_t ν_jt ū_jt: what Cⁱⁿᵛ
-    nets out of investment cost over the year. In $."""
-    return float(np.sum(dispatch.nu * scenario.capacity))
+    """The fleet's rent over the window: its profit, revenue above fuel and
+    reserve offers, Σ_jt (λ_t − cᵘ_j) u_jt + (μ_t − cʳ_j) r_jt. Equal to Σ ν ū
+    under ERCOT; under PJM the reserve row's dual also sits in the binding
+    unit's margin. What Cⁱⁿᵛ nets out of investment cost over the year. In $."""
+    return float(
+        np.sum((dispatch.lam - scenario.cost_gen[:, None]) * dispatch.u)
+        + np.sum((dispatch.mu - scenario.cost_res[:, None]) * dispatch.r)
+    )
 
 
 def alignment(

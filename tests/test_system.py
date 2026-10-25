@@ -94,8 +94,48 @@ def test_other_load_sheds_at_voll_when_short(pjm, small):
 def test_C_inv_is_annual_cost_less_rents(pjm, small):
     annual = C_inv(pjm, [small] * 3, cache=False)
     dp = b0(pjm, small)
-    per_window = float(np.sum((small.cost_inv * small.T / HOURS_PER_YEAR - dp.nu.sum(axis=1)) * small.nameplate))
-    assert np.isclose(annual, max(3 * per_window, 0.0))
+    profit = float(np.sum((dp.lam - small.cost_gen[:, None]) * dp.u + (dp.mu - small.cost_res[:, None]) * dp.r))
+    cost = float(np.sum(small.cost_inv * small.nameplate))
+    assert np.isclose(annual, max(cost - 3 * profit * HOURS_PER_YEAR / (3 * small.T), 0.0))
+
+
+def test_rent_is_on_available_capacity_not_nameplate(pjm, small):
+    """A wind column at half its nameplate: its rent is λ on what it produced, not on nameplate,
+    and it holds no reserve."""
+    windy = replace(
+        small,
+        capacity=np.vstack([small.capacity, 0.5 * np.full(small.T, 40.0)]),
+        nameplate=np.append(small.nameplate, 40.0),
+        cost_gen=np.append(small.cost_gen, 0.0),
+        cost_res=np.append(small.cost_res, 0.0),
+        cost_inv=np.append(small.cost_inv, 100_000.0),
+        unit=np.append(small.unit, 3),
+        names=(*small.names, "wind"),
+    )
+    assert windy.renewable.tolist() == [False, False, False, True]
+    dp = b0(pjm, windy)
+    assert np.allclose(dp.r[3], 0.0, atol=1e-6)
+    wind_rent = float(np.sum(dp.lam * dp.u[3]))
+    assert np.isclose(float(np.sum(dp.nu[3] * windy.capacity[3])), wind_rent, rtol=1e-6)
+    assert wind_rent < float(np.sum(dp.lam * windy.nameplate[3]))
+    from flexload.metrics import rent
+    assert np.isclose(rent(windy, dp), float(np.sum((dp.lam - windy.cost_gen[:, None]) * dp.u)), rtol=1e-6)
+
+
+def test_ordc_contingency_is_the_largest_thermal_unit(small):
+    windy = replace(
+        small,
+        capacity=np.vstack([small.capacity, np.full(small.T, 300.0)]),
+        nameplate=np.append(small.nameplate, 900.0),
+        cost_gen=np.append(small.cost_gen, 0.0),
+        cost_res=np.append(small.cost_res, 0.0),
+        cost_inv=np.append(small.cost_inv, 100_000.0),
+        unit=np.append(small.unit, 3),
+        names=(*small.names, "wind"),
+    )
+    curve = Market(reserve="ercot", C_inv=0.0).ordc_for(windy)
+    edges = np.cumsum(curve.widths[:-1])
+    assert edges.max() < 100.0 + 5 * windy.epsilon_std  # centred on the 100 MW unit, not the 900 MW wind farm
 
 
 def test_tighten_sets_the_annual_tightest_hour(small):

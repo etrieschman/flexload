@@ -28,7 +28,7 @@ nothing else. Aligned 2026-10-21. Private repo.
 | ω = (d°, cᵘ, cʳ, cⁱⁿᵛ, ū), δ = α × system load | `Scenario(delta, d_other, cost_gen, cost_res, cost_inv, capacity, nameplate, unit, names, start)` | `system.py` |
 | operating window 𝒯, the year, α, tightness | `scenario(start, T, alpha, reserve_margin, reserve_offer)`; `windows(T, alpha, reserve_margin, reserve_offer)` (the year, one tightness scale); `tighten`; `margin` | `system.py` |
 | PJM / ERCOT, γ, cⱽᴼᴸᴸ, Cⁱⁿᵛ (annual) | `Market(reserve, gamma, voll, long_run, ordc, C_inv, solver)` | `system.py` |
-| ORDC steps (w_s, π_s), π(z) = VOLL·Pr[ε > z − R̲]; ε ~ N(0, σ²) from day-ahead vs real-time net load, one σ for the year | `ORDC.from_lolp(voll, min_contingency, epsilon_std, steps)`; `Scenario.epsilon_std`; `market.ordc_for(scenario)` with R̲ = the largest unit | `system.py` |
+| ORDC steps (w_s, π_s), π(z) = VOLL·Pr[ε > z − R̲]; ε ~ N(0, σ²) from day-ahead vs real-time net load, one σ for the year | `ORDC.from_lolp(voll, min_contingency, epsilon_std, steps)`; `Scenario.epsilon_std`; `market.ordc_for(scenario)` with R̲ = the largest thermal unit's nameplate (`Scenario.renewable` marks wind, solar, hydro: no reserve, no contingency) | `system.py` |
 | dispatch 𝓜_ω(d, σ) | `market.clear(scenario, d_bid, sigma_bid, c_sigma, d_firm) -> Dispatch` | `system.py` |
 | (u, r, σᶜˡʳ, dᶜᵘʳᵗ, s), (λ, μ, ν), Π_t, Cᵏ | `Dispatch(d, sigma, u, r, shed, lam, mu, nu, eta, Pi, C_energy, C_res, C_inv, d_bid, sigma_bid, ...)`: `d, sigma` are what cleared, `d_bid, sigma_bid` what the load offered | `system.py` |
 | Cⁱⁿᵛ := (T/8760) Σⱼ(cⁱⁿᵛⱼ − Σ_year νⱼₜ)ūⱼ | `C_inv(market, windows)`, annual; `clear` prorates. Not "missing money": that needs a price cap, which there is none of yet | `system.py` |
@@ -94,6 +94,16 @@ Imports run one way: system ← tariff ← load ← metrics.
 
 ## Status (2026-10-25)
 
+- 2026-10-25, later: audit (a review agent plus identity checks). **R̲ is the largest
+  thermal unit** (400 MW; it was the 847 MW wind farm), **the rent is the fleet's
+  profit** (Σ ν ū missed the reserve row's dual on PJM's binding unit, 0.6% of its
+  pool), the year is scaled to 8,760 h, renewables hold no reserve, σ_ε scales with
+  the load, `scenario` starts at week 32, February 29 is dropped. 38 tests. With the
+  400 MW contingency ERCOT's rents reach the old 2,500 M$ cost only near a 0.06 margin,
+  where PJM sheds; Erich: scale the cost placeholders to round numbers (1,757 M$) and set
+  the margin at **0.08**, the tightest at which PJM is slack. Not tracked, by Erich's
+  choice: the ORDC's first step and tail, hydro reserve (noted in the tex), the TwoPart
+  lump sum (matches the report).
 - 2026-10-25: **`C_inv` takes the fleet's rent on available capacity**, ν_jt ū_jt, not
   nameplate (which overstated renewables' rent, most at ERCOT's evening scarcity
   hours, and made the two markets' annual pools differ). The margin is retuned to

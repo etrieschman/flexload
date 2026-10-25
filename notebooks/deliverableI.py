@@ -4,7 +4,7 @@
 # Every exhibit sits at the base configuration and moves at most two dimensions.
 # Base: ERCOT, week 32, α = 5%, training data center, exogenous price-taker, τ₀.
 # Week 32 holds the year's tightest hour, where the reserve margin is set, and
-# 19 of ERCOT's 125 scarcity hours.
+# 16 of ERCOT's 94 scarcity hours.
 #
 # | exhibit | moves | question |
 # |---|---|---|
@@ -50,7 +50,7 @@ np.set_printoptions(precision=1, suppress=True, linewidth=140)
 T = 168
 WEEK = 32  # the window: the year's tightest hour is in it
 ALPHA = 0.05
-RESERVE_MARGIN = 0.11
+RESERVE_MARGIN = 0.08
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
 TYPE = "mover"  # the type Figure 1 and Table 3 follow
 BUSINESSES = {"data_center_train": "training DC", "bitcoin_mine": "bitcoin mine"}
@@ -187,6 +187,7 @@ for k in POOL:
     heights = np.array([annual[m][k] for m in MARKETS])
     ax[2].bar([m.upper() for m in MARKETS], heights, bottom=bottom, color=POOL[k], width=0.6)
     bottom += heights
+ax[2].set_ylim(0, 1.08 * float(bottom.max()))
 ax[2].set_title("the year")
 ax[2].yaxis.tick_right()
 ax[2].yaxis.set_label_position("right")
@@ -200,7 +201,7 @@ publish(figures / "figure_0_pools.png")
 # Figure 1, the window. Rows: the system load at B0 against capacity and the
 # scarcity threshold, capacity less the reserve the market pays for (under
 # ERCOT load-following γ d_sys plus the width of the demand curve, under PJM
-# the largest unit plus load-following; load above it and the market prices
+# the largest thermal unit plus load-following; load above it and the market prices
 # scarcity; the response moves system load by at most βα, invisible at this
 # scale, so B0 only); the energy price λ; the load's consumption. Columns: the
 # markets. Lines: B0 (black) and R for the mover run as a training data center
@@ -220,7 +221,7 @@ capacity = scenario.capacity.sum(axis=0)
 ordc = markets["ercot"].ordc_for(scenario)
 reserve_priced = {  # the reserve the market pays for; load above capacity less this and it prices scarcity
     "ercot": markets["ercot"].gamma * scenario.d_sys + ordc.widths[ordc.prices > 0].sum(),
-    "pjm": float((scenario.units @ scenario.nameplate).max()) + markets["pjm"].gamma * scenario.d_sys,
+    "pjm": float((scenario.units @ (scenario.nameplate * ~scenario.renewable)).max()) + markets["pjm"].gamma * scenario.d_sys,
 }
 plt.rcParams.update({"font.size": 16, "axes.labelsize": 17, "axes.titlesize": 18, "legend.fontsize": 15})
 fig, ax = plt.subplots(3, 2, figsize=(22, 7.5), sharex=True, sharey="row")

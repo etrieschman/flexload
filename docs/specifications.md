@@ -20,14 +20,15 @@ The default size is $\alpha = 0.05$.
 
 ## Tightness
 
-One scale factor multiplies $\delta$ and $d^\circ$ in all 52 windows, so that the year's tightest hour has a reserve margin of 0.11.
+One scale factor multiplies $\delta$ and $d^\circ$ in all 52 windows, so that the year's tightest hour has a reserve margin of 0.08.
 Margin is spare capacity over system load at the tightest hour.
 Scaling load rather than capacity keeps unit sizes and the merit order intact, and leaves $\alpha$ unchanged.
 Only the annual peak window sits at the margin; the others keep their seasonal slack.
 
-I set the margin at 0.11 because that is where ERCOT's energy and reserve prices pay the fleet's annual investment cost: rents of 2,473 M\$ on the capacity available each hour, against a cost of 2,493 M\$ (`notebooks/tune_reserve_margin.py`).
-PJM at the same margin earns 528 M\$ and is short 1,965 M\$.
-Until 2026-10-25 the rent was taken on nameplate, which overstated renewables' rent, most at ERCOT's evening scarcity hours; the margin was 0.15.
+I set the margin at 0.08, the tightest at which PJM's requirement stays slack, and the investment-cost placeholders near what ERCOT's energy and reserve prices pay the fleet there: rents of 1,768 M\$ against a cost of 1,757 M\$ (`notebooks/tune_reserve_margin.py`).
+PJM at the same margin earns about 550 M\$ and is short the rest.
+The rent is the fleet's profit, revenue above fuel and reserve offers; February 29 is dropped so the year is 8,760 hours.
+Until 2026-10-25 the rent was taken on nameplate, R̲ was the largest unit of any kind, and the margin was 0.15.
 Above a margin of about 0.25 reserve is never scarce and the two markets earn the same rents.
 
 ## Market parameters
@@ -45,7 +46,7 @@ $\varepsilon$ is the hourly net-load forecast error: real-time net load, average
 I fit it as $N(0, \sigma_\varepsilon^2)$ with one $\sigma_\varepsilon$ for the year.
 ERCOT fits $\varepsilon$ by season and hour block; that is a refinement.
 
-The minimum contingency level $\underline R$ is the largest physical unit's nameplate capacity, the contingency PJM's reserve row protects against.
+The minimum contingency level $\underline R$ is the largest thermal unit's nameplate, 400 MW, the contingency PJM's reserve row protects against; a wind farm's nameplate is not what can trip, and its output is a forecast quantity whose error is $\varepsilon$.
 ERCOT sets $\underline R$ at 3,000 MW administratively.
 
 The ten steps are spaced evenly in price.

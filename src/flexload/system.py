@@ -27,20 +27,23 @@ import rts_gmlc as rts
 HOURS_PER_YEAR = 8760
 
 # Placeholder annualized capital cost by RTS-GMLC category, $/kW-year (RTS-GMLC
-# has none). Replace with a cited table before a result depends on the
-# investment layer. docs/assumptions.md #1.
+# has none). Round numbers set 2026-10-25 so the fleet's annual cost, 1,757 M$,
+# is close to the rent ERCOT's prices pay it at the 0.08 margin (1,768 M$),
+# where PJM's requirement is still slack; before that they were about 1.4×
+# these and summed to 2,500 M$. Replace with a cited table before a result
+# depends on the investment layer. docs/assumptions.md #1.
 INVESTMENT_COST_PER_KW_YEAR = {
-    "Nuclear": 600.0,
-    "Coal": 350.0,
-    "Gas CC": 110.0,
-    "Gas CT": 80.0,
-    "Oil CT": 80.0,
-    "Oil ST": 300.0,
-    "Hydro": 300.0,
-    "Wind": 140.0,
-    "Solar PV": 90.0,
-    "Solar RTPV": 90.0,
-    "CSP": 500.0,
+    "Nuclear": 400.0,
+    "Coal": 250.0,
+    "Gas CC": 80.0,
+    "Gas CT": 60.0,
+    "Oil CT": 60.0,
+    "Oil ST": 200.0,
+    "Hydro": 200.0,
+    "Wind": 100.0,
+    "Solar PV": 60.0,
+    "Solar RTPV": 60.0,
+    "CSP": 350.0,
 }
 EXCLUDED = ("Storage", "Sync_Cond", "CSP")  # no single-period dispatch model
 RENEWABLE = ("pv", "rtpv", "wind", "hydro")  # availability from the time series
@@ -90,6 +93,13 @@ class Scenario:
         return (ids[:, None] == self.unit[None, :]).astype(float)
 
     @property
+    def renewable(self) -> np.ndarray:
+        """(J,) True for wind, solar and hydro columns, by name. They offer no
+        reserve and are no contingency: their output is a forecast quantity,
+        whose error is ε."""
+        return np.array([any(tag in n.upper() for tag in ("WIND", "PV", "HYDRO")) for n in self.names], dtype=bool)
+
+    @property
     def availability(self) -> np.ndarray:
         """(J, T) capacity as a fraction of nameplate; the long run's capacity shape."""
         return (
@@ -97,31 +107,38 @@ class Scenario:
         )
 
 
+def _year(df: pl.DataFrame) -> pl.DataFrame:
+    """The data's year without February 29: 8,760 hours, so a year is a year."""
+    return df.filter(~((pl.col("month") == 2) & (pl.col("day") == 29)))
+
+
 def scenario(
-    start: int = 31 * 168,
+    start: int = 32 * 168,
     T: int = 168,
     alpha: float = 0.05,
-    reserve_margin: float | None = 0.11,
+    reserve_margin: float | None = 0.08,
     reserve_offer: float = 0.1,
 ) -> Scenario:
-    """Hours ``[start, start + T)`` of RTS-GMLC's day-ahead series at one node.
+    """Hours ``[start, start + T)`` of RTS-GMLC's day-ahead series at one node,
+    February 29 dropped.
     ``alpha`` sets the load's size: δ is that share of system load, hour by
     hour, carved out of the RTS total so δ + d° is the data. ``reserve_margin``
     scales both loads so the tightest hour has that margin (``tighten``). The
-    default 0.11 is the margin at which ERCOT's prices pay the fleet's annual
-    investment cost through rents, within one percent (``C_inv`` ≈ 0 over the
-    year; notebooks/tune_reserve_margin.py). ``reserve_offer`` sets the
+    default 0.08 is the margin at which ERCOT's prices pay the fleet's annual
+    investment cost through rents (``C_inv`` = 0 over the year; the cost
+    placeholders are set near what those rents pay, and below 0.08 PJM's
+    requirement binds; notebooks/tune_reserve_margin.py). ``reserve_offer`` sets the
     reserve offer cʳⱼ = reserve_offer × cᵘⱼ on thermal blocks (RTS-GMLC has
     none; docs/assumptions.md #5); renewables and hydro offer none."""
     lo, hi = start, start + T
-    load = rts.timeseries("load", "day_ahead")[lo:hi]
+    load = _year(rts.timeseries("load", "day_ahead"))[lo:hi]
     if len(load) != T:
         raise ValueError(f"hours {lo}:{hi} are not in the day-ahead series")
     total = sum(load[str(a)].to_numpy().astype(float) for a in (1, 2, 3))
     delta = alpha * total
 
     blocks = rts.offer_blocks().filter(pl.col("mw") > 0.0)
-    series = {k: rts.timeseries(k, "day_ahead")[lo:hi] for k in RENEWABLE}
+    series = {k: _year(rts.timeseries(k, "day_ahead"))[lo:hi] for k in RENEWABLE}
     renewable = {
         c: s for s in series.values() for c in s.columns if c not in rts.TIME_COLS
     }
@@ -168,7 +185,7 @@ def _epsilon_std() -> float:
     def net_load(market: str) -> np.ndarray:
         total = 0.0
         for kind, sign in (("load", 1.0), ("wind", -1.0), ("pv", -1.0), ("rtpv", -1.0)):
-            series = rts.timeseries(kind, market)
+            series = _year(rts.timeseries(kind, market))
             total = (
                 total
                 + sign
@@ -192,15 +209,16 @@ def _epsilon_std() -> float:
 def windows(
     T: int = 168,
     alpha: float = 0.05,
-    reserve_margin: float | None = 0.11,
+    reserve_margin: float | None = 0.08,
     reserve_offer: float = 0.1,
 ) -> list[Scenario]:
     """The year cut into operating windows of T hours, under one tightness
     scale: the annual tightest hour has the margin and the other windows keep
-    their seasonal slack. At the default 0.11, ERCOT's energy and reserve
-    prices pay the fleet's annual investment cost within one percent and PJM
-    is short about 1.97 B$ (notebooks/tune_reserve_margin.py)."""
-    hours = rts.timeseries("load", "day_ahead").height
+    their seasonal slack. At the default 0.08, ERCOT's energy and reserve
+    prices pay the fleet's annual investment cost and PJM is short about
+    1.2 B$ (notebooks/tune_reserve_margin.py). The last 24 hours of the year
+    fall outside the 52 windows."""
+    hours = _year(rts.timeseries("load", "day_ahead")).height
     return tighten(
         [
             scenario(s, T, alpha, reserve_margin=None, reserve_offer=reserve_offer)
@@ -212,8 +230,9 @@ def windows(
 
 def tighten(scenarios: list[Scenario], reserve_margin: float | None) -> list[Scenario]:
     """Scale δ and d° in every scenario by one factor so that the tightest hour
-    across them has ``margin == reserve_margin``. Scaling load, not capacity,
-    keeps unit sizes and the merit order intact; α is unchanged."""
+    across them has ``margin == reserve_margin``, and the forecast error ε with
+    them, since it is an error on load. Scaling load, not capacity, keeps unit
+    sizes and the merit order intact; α is unchanged."""
     if reserve_margin is None:
         return scenarios
     s = (min(margin(sc) for sc in scenarios) + 1.0) / (1.0 + reserve_margin)
@@ -229,7 +248,7 @@ def tighten(scenarios: list[Scenario], reserve_margin: float | None) -> list[Sce
             sc.unit,
             sc.names,
             sc.start,
-            sc.epsilon_std,
+            sc.epsilon_std * s,
         )
         for sc in scenarios
     ]
@@ -257,10 +276,14 @@ class ORDC:
         cls, voll: float, min_contingency: float, epsilon_std: float, steps: int = 10
     ) -> "ORDC":
         """π(z) = VOLL · Pr[ε > z − R̲] with ε ~ N(0, epsilon_std²), as steps
-        spaced evenly in price: heights at fractions (steps−1)/steps, …, 1/steps
-        of VOLL, widths from the normal quantiles where the curve crosses each
-        height, then a step of zero price and infinite width. Narrow near R̲,
-        wide in the tail."""
+        spaced evenly in price. The edges are where the curve crosses the
+        fractions (steps−1)/steps, …, 1/steps of VOLL; each step is priced at
+        the curve's height at its left edge, so the heights are VOLL, then
+        (steps−1)/steps, …, 2/steps of VOLL, then a step of zero price and
+        infinite width. Two approximations, both deferred (CLAUDE.md): the
+        first step is VOLL where the curve is VOLL·Pr[ε > −R̲], and the tail
+        below 1/steps of VOLL is priced at zero. Narrow near R̲, wide in the
+        tail."""
         from scipy.stats import norm
 
         fractions = np.arange(steps - 1, 0, -1) / steps
@@ -327,13 +350,14 @@ class Market:
     solver_options: dict = field(default_factory=dict)
 
     def ordc_for(self, scenario: Scenario) -> ORDC:
-        """The curve: ``ordc`` if given, else fit with R̲ at the largest unit's
-        output (the contingency PJM's row protects against) and the data's ε."""
+        """The curve: ``ordc`` if given, else fit with R̲ at the largest thermal
+        unit's nameplate (the contingency PJM's row protects against; a wind
+        farm's nameplate is not what can trip) and the window's ε."""
         if self.ordc is not None:
             return self.ordc
         return ORDC.from_lolp(
             self.voll,
-            float((scenario.units @ scenario.nameplate).max()),
+            float((scenario.units @ (scenario.nameplate * ~scenario.renewable)).max()),
             scenario.epsilon_std,
         )
 
@@ -370,6 +394,8 @@ class Market:
             )
         else:
             cons["capacity"] = u + r <= scenario.capacity
+        if scenario.renewable.any():  # wind, solar and hydro offer no reserve
+            cons["renewable_reserve"] = r[np.flatnonzero(scenario.renewable), :] == 0
         X = cp.Variable(
             T
         )  # reserve above load-following, its own variable so the per-unit rows stay sparse
@@ -488,18 +514,20 @@ class Market:
 
 
 def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
-    """The annual cost of the investment layer: max(0, Σ_j (cⁱⁿᵛ_j ū_j − Σ_t ν_jt ū_jt))
-    on the B0 path (δ, 0) over the year, investment cost on nameplate less the
-    rent each unit earns on the capacity it has available that hour, in $.
-    (Until 2026-10-25 the rent was taken on nameplate, which overstated
-    renewables' rent, most at ERCOT's evening scarcity hours.) The floor at zero: a market whose prices overpay
+    """The annual cost of the investment layer: max(0, Σ_j cⁱⁿᵛ_j ū_j − rent),
+    the fleet's investment cost on nameplate less the rent it earns on the B0
+    path (δ, 0), in $. The rent is the fleet's profit, revenue above fuel and
+    reserve offers (:func:`flexload.metrics.rent`), summed over the windows and
+    scaled to 8760 hours. (Until 2026-10-25 the rent was Σ ν ū on nameplate,
+    which overstated renewables' rent and missed the reserve row's dual on the
+    binding unit under PJM.) The floor at zero: a market whose prices overpay
     the fleet has nothing left to collect, so the layer bills zero rather than
     crediting the load. ``clear`` prorates it to the window by T/8760. Cached
     under ``~/.cache/flexload`` by market fields and the year's data; the cache
     keeps the signed value."""
     key = None
     if cache:
-        h = hashlib.sha1(repr((market.reserve, market.gamma, market.voll, "rent on capacity")).encode())
+        h = hashlib.sha1(repr((market.reserve, market.gamma, market.voll, "rent as profit, 8760 h")).encode())
         if market.ordc is not None:
             h.update(market.ordc.widths.tobytes() + market.ordc.prices.tobytes())
         for s in windows:
@@ -525,16 +553,14 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
         market.solver,
         market.solver_options,
     )
-    by_window = []
+    by_window = []  # the fleet's rent in each window
     for s in windows:
         b0 = m.clear(s, s.delta, np.zeros(s.T), np.zeros(s.T))
         by_window.append(
-            float(
-                np.sum(s.cost_inv * s.T / HOURS_PER_YEAR * s.nameplate)
-                - np.sum(b0.nu * s.capacity)
-            )
+            float(np.sum((b0.lam - s.cost_gen[:, None]) * b0.u + (b0.mu - s.cost_res[:, None]) * b0.r))
         )
-    annual = float(np.sum(by_window))
+    cost = float(np.sum(windows[0].cost_inv * windows[0].nameplate))
+    annual = cost - float(np.sum(by_window)) * HOURS_PER_YEAR / sum(s.T for s in windows)
     if key is not None:
         key.parent.mkdir(parents=True, exist_ok=True)
         key.write_text(
