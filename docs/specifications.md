@@ -20,13 +20,14 @@ The default size is $\alpha = 0.05$.
 
 ## Tightness
 
-One scale factor multiplies $\delta$ and $d^\circ$ in all 52 windows, so that the year's tightest hour has a reserve margin of 0.15.
+One scale factor multiplies $\delta$ and $d^\circ$ in all 52 windows, so that the year's tightest hour has a reserve margin of 0.11.
 Margin is spare capacity over system load at the tightest hour.
 Scaling load rather than capacity keeps unit sizes and the merit order intact, and leaves $\alpha$ unchanged.
 Only the annual peak window sits at the margin; the others keep their seasonal slack.
 
-I set the margin at 0.15 because that is where ERCOT's energy-only prices pay the fleet's annual investment cost: rents of 2,516 M\$ against a cost of 2,500 M\$.
-PJM at the same margin is short 1,057 M\$.
+I set the margin at 0.11 because that is where ERCOT's energy and reserve prices pay the fleet's annual investment cost: rents of 2,473 M\$ on the capacity available each hour, against a cost of 2,493 M\$ (`notebooks/tune_reserve_margin.py`).
+PJM at the same margin earns 528 M\$ and is short 1,965 M\$.
+Until 2026-10-25 the rent was taken on nameplate, which overstated renewables' rent, most at ERCOT's evening scarcity hours; the margin was 0.15.
 Above a margin of about 0.25 reserve is never scarce and the two markets earn the same rents.
 
 ## Market parameters

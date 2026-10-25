@@ -92,7 +92,14 @@ docs/         assumptions.md (every non-report choice, one line each); catalog/l
 
 Imports run one way: system ← tariff ← load ← metrics.
 
-## Status (2026-10-23)
+## Status (2026-10-25)
+
+- 2026-10-25: **`C_inv` takes the fleet's rent on available capacity**, ν_jt ū_jt, not
+  nameplate (which overstated renewables' rent, most at ERCOT's evening scarcity
+  hours, and made the two markets' annual pools differ). The margin is retuned to
+  **0.11**: ERCOT's rents 2,473 vs 2,493 M$, PJM's pool 1,965 M$, 125 scarcity
+  hours in the year, 19 in week 32; `notebooks/tune_reserve_margin.py` is the sweep.
+  Figures: larger type, pools on one scale with the year summed, week 32 wider.
 
 - 2026-10-23, later: **V is per MW of load**, V = −Σₜ (ψ/δₜ)(dₜ − δₜ)², ψ in $/MWh
   (PSI = 50, 100, 200): the planner's cut is λ/2ψ as a fraction of δ, so the value of

@@ -38,7 +38,7 @@ print("\nSettings")
 T = 168  # hours per operating window: one week
 WEEK = 32  # the window shown: mid August, the week with the year's tightest hour
 ALPHA = 0.05  # the load's size, its share of system load
-RESERVE_MARGIN = 0.15  # spare capacity at the year's tightest hour (the default)
+RESERVE_MARGIN = 0.11  # spare capacity at the year's tightest hour (the default)
 RESERVE = "ercot"  # "ercot" (demand curve) or "pjm" (hard requirement)
 BUSINESS = "data_center_train"  # or "data_center_infer", "bitcoin_mine": sets (psi, beta, A) of the swept types
 TYPE = "mover"  # inflexible, mover, controllable, emergency, curtailable

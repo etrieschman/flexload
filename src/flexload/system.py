@@ -101,15 +101,16 @@ def scenario(
     start: int = 31 * 168,
     T: int = 168,
     alpha: float = 0.05,
-    reserve_margin: float | None = 0.15,
+    reserve_margin: float | None = 0.11,
     reserve_offer: float = 0.1,
 ) -> Scenario:
     """Hours ``[start, start + T)`` of RTS-GMLC's day-ahead series at one node.
     ``alpha`` sets the load's size: δ is that share of system load, hour by
     hour, carved out of the RTS total so δ + d° is the data. ``reserve_margin``
     scales both loads so the tightest hour has that margin (``tighten``). The
-    default 0.15 is the margin at which ERCOT's prices pay the fleet's annual
-    investment cost (``C_inv`` ≈ 0 over the year). ``reserve_offer`` sets the
+    default 0.11 is the margin at which ERCOT's prices pay the fleet's annual
+    investment cost through rents, within one percent (``C_inv`` ≈ 0 over the
+    year; notebooks/tune_reserve_margin.py). ``reserve_offer`` sets the
     reserve offer cʳⱼ = reserve_offer × cᵘⱼ on thermal blocks (RTS-GMLC has
     none; docs/assumptions.md #5); renewables and hydro offer none."""
     lo, hi = start, start + T
@@ -191,13 +192,14 @@ def _epsilon_std() -> float:
 def windows(
     T: int = 168,
     alpha: float = 0.05,
-    reserve_margin: float | None = 0.15,
+    reserve_margin: float | None = 0.11,
     reserve_offer: float = 0.1,
 ) -> list[Scenario]:
     """The year cut into operating windows of T hours, under one tightness
     scale: the annual tightest hour has the margin and the other windows keep
-    their seasonal slack. At the default 0.15, ERCOT's energy-only prices pay
-    the fleet's annual investment cost and PJM is short about 1.06 B$."""
+    their seasonal slack. At the default 0.11, ERCOT's energy and reserve
+    prices pay the fleet's annual investment cost within one percent and PJM
+    is short about 1.97 B$ (notebooks/tune_reserve_margin.py)."""
     hours = rts.timeseries("load", "day_ahead").height
     return tighten(
         [
@@ -486,16 +488,18 @@ class Market:
 
 
 def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
-    """The annual cost of the investment layer: max(0, Σ_j (cⁱⁿᵛ_j − Σ_t ν_jt) ū_j)
-    on the B0 path (δ, 0) over the year, investment cost less the rents capacity
-    earns in the market, in $. The floor at zero: a market whose prices overpay
+    """The annual cost of the investment layer: max(0, Σ_j (cⁱⁿᵛ_j ū_j − Σ_t ν_jt ū_jt))
+    on the B0 path (δ, 0) over the year, investment cost on nameplate less the
+    rent each unit earns on the capacity it has available that hour, in $.
+    (Until 2026-10-25 the rent was taken on nameplate, which overstated
+    renewables' rent, most at ERCOT's evening scarcity hours.) The floor at zero: a market whose prices overpay
     the fleet has nothing left to collect, so the layer bills zero rather than
     crediting the load. ``clear`` prorates it to the window by T/8760. Cached
     under ``~/.cache/flexload`` by market fields and the year's data; the cache
     keeps the signed value."""
     key = None
     if cache:
-        h = hashlib.sha1(repr((market.reserve, market.gamma, market.voll)).encode())
+        h = hashlib.sha1(repr((market.reserve, market.gamma, market.voll, "rent on capacity")).encode())
         if market.ordc is not None:
             h.update(market.ordc.widths.tobytes() + market.ordc.prices.tobytes())
         for s in windows:
@@ -526,10 +530,8 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
         b0 = m.clear(s, s.delta, np.zeros(s.T), np.zeros(s.T))
         by_window.append(
             float(
-                np.sum(
-                    (s.cost_inv * s.T / HOURS_PER_YEAR - b0.nu.sum(axis=1))
-                    * s.nameplate
-                )
+                np.sum(s.cost_inv * s.T / HOURS_PER_YEAR * s.nameplate)
+                - np.sum(b0.nu * s.capacity)
             )
         )
     annual = float(np.sum(by_window))

@@ -16,7 +16,7 @@ from dataclasses import replace
 import numpy as np
 import flexload as fl
 
-weeks = fl.windows(T=168, alpha=0.05, reserve_margin=0.15)  # ω and δ from RTS-GMLC: the year in operating windows
+weeks = fl.windows(T=168, alpha=0.05, reserve_margin=0.11)  # ω and δ from RTS-GMLC: the year in operating windows
 scenario = weeks[31]
 market = fl.Market(reserve="ercot")                          # or "pjm"
 market = replace(market, C_inv=fl.C_inv(market, weeks))      # annual investment pool, net of rents, cached

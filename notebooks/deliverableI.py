@@ -4,7 +4,7 @@
 # Every exhibit sits at the base configuration and moves at most two dimensions.
 # Base: ERCOT, week 32, α = 5%, training data center, exogenous price-taker, τ₀.
 # Week 32 holds the year's tightest hour, where the reserve margin is set, and
-# 12 of ERCOT's 56 scarcity hours (week 29 has 21; week 31 has one).
+# 19 of ERCOT's 125 scarcity hours.
 #
 # | exhibit | moves | question |
 # |---|---|---|
@@ -50,7 +50,7 @@ np.set_printoptions(precision=1, suppress=True, linewidth=140)
 T = 168
 WEEK = 32  # the window: the year's tightest hour is in it
 ALPHA = 0.05
-RESERVE_MARGIN = 0.15
+RESERVE_MARGIN = 0.11
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
 TYPE = "mover"  # the type Figure 1 and Table 3 follow
 BUSINESSES = {"data_center_train": "training DC", "bitcoin_mine": "bitcoin mine"}
@@ -179,7 +179,7 @@ for a, m in zip(ax, MARKETS):
     a.set_title(m.upper())
     a.set_xlabel("week of the year")
 ax[0].set_ylim(0, 1.08 * max(float((p["energy"] + p["reserve"] + p["investment"]).max()) for p in pools.values()) / 1e6)
-ax[0].set_ylabel("B0 pools [M$ per week]")
+ax[0].set_ylabel("pools, M$ per week")
 ax[1].tick_params(labelleft=False)
 annual = {m: {k: float(pools[m][k].sum()) / 1e6 for k in POOL} for m in MARKETS}  # the year: the weeks summed
 bottom = np.zeros(len(MARKETS))
@@ -188,9 +188,11 @@ for k in POOL:
     ax[2].bar([m.upper() for m in MARKETS], heights, bottom=bottom, color=POOL[k], width=0.6)
     bottom += heights
 ax[2].set_title("the year")
-ax[2].set_ylabel("B0 pools [M$ per year]")
-fig.legend(*ax[1].get_legend_handles_labels(), loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
-fig.tight_layout()
+ax[2].yaxis.tick_right()
+ax[2].yaxis.set_label_position("right")
+ax[2].set_ylabel("pools, M$ per year")
+ax[0].legend(loc="upper left", frameon=False)
+fig.tight_layout(w_pad=0.5)
 fig.savefig(figures / "figure_0_pools.png", dpi=150, bbox_inches="tight")
 publish(figures / "figure_0_pools.png")
 
@@ -226,12 +228,12 @@ for j, m in enumerate(MARKETS):
     ax[0, j].plot(scenario.d_sys, color="k", ls=STYLE["B0"], lw=2.2)
     ax[0, j].plot(capacity, color="grey", lw=1.2)
     ax[0, j].plot(capacity - reserve_priced[m], color="grey", ls="--", lw=1.2)
-    ax[1, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"], lw=2.2, zorder=1)  # B0 behind R
-    ax[2, j].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=2.2, zorder=1)
+    ax[1, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"], lw=1.2, zorder=1)  # B0 thin, behind R
+    ax[2, j].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=1.2, zorder=1)
     for b in BUSINESSES:
         x = paths[m, "R", b]
-        ax[1, j].plot(x.lam, color=COLOR[b], ls=STYLE["R"], lw=2.2, alpha=0.7, zorder=2)
-        ax[2, j].plot(x.d, color=COLOR[b], ls=STYLE["R"], lw=2.2, alpha=0.7, zorder=2)
+        ax[1, j].plot(x.lam, color=COLOR[b], ls=STYLE["R"], lw=2.4, alpha=0.8, zorder=2)
+        ax[2, j].plot(x.d, color=COLOR[b], ls=STYLE["R"], lw=2.4, alpha=0.8, zorder=2)
     for a in ax[:, j]:
         a.axvline(scenario.peak, color="grey", lw=0.8)
     ax[0, j].set_title(m.upper())
@@ -243,7 +245,7 @@ ax[1, 0].set_ylim(20, 100)
 ax[1, 0].set_ylabel(r"$\lambda_t$ [\$/MWh]")
 ax[2, 0].set_ylabel(r"$d_t$ [MW]")
 legend = [Line2D([], [], color="k", ls=STYLE["B0"], lw=2.2, label=r"B0: $d^{\rm sys}_t$; $\lambda_t$; $\delta_t$")]
-legend += [Line2D([], [], color=COLOR[b], lw=2.2, alpha=0.7, label=f"R, {name}") for b, name in BUSINESSES.items()]
+legend += [Line2D([], [], color=COLOR[b], lw=2.4, alpha=0.8, label=f"R, {name}") for b, name in BUSINESSES.items()]
 legend += [Line2D([], [], color="grey", lw=1.2, label=r"$\sum_j \overline{u}_{jt}$")]
 legend += [Line2D([], [], color="grey", ls="--", lw=1.2, label="scarcity threshold")]
 legend += [Line2D([], [], color="grey", lw=0.8, label=f"$t^* = {scenario.peak}$")]
@@ -415,16 +417,16 @@ print(f"time [s]:\t{time.time() - t0:.0f}")
 grid.write_csv(tables / "rows_alpha.csv")
 
 # %%
-# Table 3 (RQ3). Rows: market × α × business, the mover. Columns: the
-# flexibility value and efficiency with their shares, as in Table 1; fairness
-# by layer. Under ERCOT the response removes the scarcity prices and everyone
+# Table 3 (RQ3). Rows: market × business × α, the mover, so each business reads
+# down its sizes. Columns: the flexibility value and efficiency with their
+# shares, as in Table 1; fairness by layer. Under ERCOT the response removes the scarcity prices and everyone
 # else's energy bill falls by tens of M$, a hundred times the other layers;
 # under PJM the investment layer carries the change.
 print("\nTable 3: load size against flexibility value, efficiency and fairness (RQ3)")
-table_3 = label(grid.sort("market", "alpha", "business")).select(
+table_3 = label(grid.sort("market", "business", "alpha")).select(
     "market",
-    (pl.col("alpha") * 100).cast(pl.Int64).alias(r"$\alpha$ [\%]"),
     "business",
+    (pl.col("alpha") * 100).cast(pl.Int64).alias(r"$\alpha$ [\%]"),
     FLEXIBILITY,
     EFFICIENCY,
     *[(pl.col(f"fairness_{k}") / K).alias(k) for k in fl.LAYERS],

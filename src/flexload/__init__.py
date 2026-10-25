@@ -1,6 +1,6 @@
 """flexload: tariff design for price-responsive loads, the memo transcribed.
 
-    weeks    = windows(T=168, alpha=0.05, reserve_margin=0.15)   # ω and δ: the year in operating windows
+    weeks    = windows(T=168, alpha=0.05, reserve_margin=0.11)   # ω and δ: the year in operating windows
     market   = Market(reserve="ercot")                           # the environment
     market   = replace(market, C_inv=C_inv(market, weeks))                      # annual cost of the investment layer
     scenario = weeks[31]
