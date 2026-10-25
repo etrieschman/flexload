@@ -63,6 +63,12 @@ def recovery(
     return {k: cost[k] - own[k] - others[k] for k in LAYERS}
 
 
+def rent(scenario: Scenario, dispatch: Dispatch) -> float:
+    """The fleet's capacity rent over the window, Σ_j Σ_t ν_jt ū_jt: what Cⁱⁿᵛ
+    nets out of investment cost over the year. In $."""
+    return float(np.sum(dispatch.nu * scenario.capacity))
+
+
 def alignment(
     tariff: Tariff, market: Market, scenario: Scenario, realized: Dispatch, b0: Dispatch
 ) -> pl.DataFrame:
@@ -143,7 +149,7 @@ def summary(
     of flexibility, the bill by layer at B0, R and B1, Δᵏ_t at R, signed, over
     the hours where the layer's marginal charge or marginal cost is nonzero
     (Erich, 2026-10-24; with reserve offers that is every hour on reserve, and
-    t* on investment): their count, mean, 1st and 99th percentiles, recovery at R and B1, fairness (others' bill, R − B0), the
+    t* on investment): their count, mean, 1st and 99th percentiles, recovery at R and B1, fairness (others' bill, R − B0), the fleet's capacity rent at B0, R and B1, the
     belief's price error, and the fixed point's iterations and last change.
     ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if already solved.
     S is read from a clearing at each of the three bids."""
@@ -193,6 +199,9 @@ def summary(
         **{f"recovery_{k}": v for k, v in rho.items()},
         **{f"recovery_b1_{k}": v for k, v in rho_b1.items()},
         **{f"fairness_{k}": v for k, v in fair.items()},
+        "rent_b0": rent(scenario, b0),
+        "rent": rent(scenario, dispatch),
+        "rent_b1": rent(scenario, planned),
         "price_error": float(np.abs(believed.lam - dispatch.lam).mean()),
         "iterations": len(history) or None,
         "last_change": history[-1] if history else None,

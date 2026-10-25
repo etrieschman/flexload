@@ -297,6 +297,7 @@ table_1 = label(rows.filter(pl.col("type") != "inflexible").sort("market", "type
     FLEXIBILITY,
     EFFICIENCY,
     *[((pl.col(f"bill_{k}") - pl.col(f"bill_b0_{k}")) / K).alias(name) for k, name in BILL_CHANGE.items()],
+    ((pl.col("rent") - pl.col("rent_b0")) / K).alias(r"rent [k\$]"),
 )
 print(table_1)
 fl.tex(table_1, tables / "table_1.tex", digits=1, groups={r"bill change [k\$]": list(BILL_CHANGE.values())})
@@ -333,9 +334,10 @@ publish(tables / "table_2.tex")
 
 # %%
 # The findings table: one row per claim of §4, the mover at the base
-# configuration, columns market × business, from ``rows`` and the Figure 1
-# dispatches. Generators' revenue is λᵀΣⱼuⱼ + μᵀΣⱼrⱼ. The reserve pool's
-# over-collection is −ρʳᵉˢ: the ex-ante pool billed less the realized cost.
+# configuration, columns market × business, from the operator's table's
+# rows. Generators' rent is the fleet's capacity rent Σ ν_jt ū_jt, what Cⁱⁿᵛ
+# nets out of investment cost. The reserve pool's over-collection is −ρʳᵉˢ:
+# the ex-ante pool billed less the realized cost.
 print("\nThe findings table: the mover by market and business")
 M = 1e6
 
@@ -343,11 +345,6 @@ M = 1e6
 def money(v: float) -> str:
     """M$ to one decimal; three where the value would print as zero."""
     return f"{v:,.3f}" if abs(v) < 0.05 else f"{v:,.1f}"
-
-
-def revenue(x) -> float:
-    """What generators are paid: λᵀΣⱼuⱼ + μᵀΣⱼrⱼ."""
-    return float(x.lam @ x.u.sum(axis=0) + x.mu @ x.r.sum(axis=0))
 
 
 columns, groups = {}, {}
@@ -366,7 +363,7 @@ for i, m in enumerate(MARKETS):
             f"{r['efficiency_share'] * 100:.1f}\\%",
             money(bill / M),
             money(others / M),
-            money((revenue(paths[m, "R", b]) - revenue(paths[m, "B0"])) / M),
+            money((r["rent"] - r["rent_b0"]) / M),
             money(-r["recovery_reserve"] / M),
         ]
 table_f = pl.DataFrame(
@@ -376,7 +373,7 @@ table_f = pl.DataFrame(
             r"lost to the tariff, $(S^{B1} - S^{R}) / (S^{B1} - S^{B0})$",
             r"the load's bill, R less B0 [M\$]",
             r"everyone else's bill, R less B0 [M\$]",
-            r"generators' revenue, R less B0 [M\$]",
+            r"generators' rent, R less B0 [M\$]",
             r"the reserve pool over-collects, $-\rho^{\rm res}$ [M\$]",
         ],
         **columns,
