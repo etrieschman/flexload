@@ -140,12 +140,10 @@ def summary(
     b1: tuple | None = None,
 ) -> dict:
     """One row: welfare at B0, B1 and R, efficiency and its share of the value
-    of flexibility, the bill by layer at B0, R and B1, Δᵏ_t at R, signed: on
-    reserve over the scarcity hours, where μ_t is above every reserve offer
-    (on the demand curve under ERCOT, the requirement binding under PJM); on
-    the other layers over the hours where it is nonzero (investment: t*). Their
-    count, mean, 1st and 99th percentiles (Erich, 2026-10-24: over all hours
-    the mean is diluted by the offer-price hours), recovery at R and B1, fairness (others' bill, R − B0), the
+    of flexibility, the bill by layer at B0, R and B1, Δᵏ_t at R, signed, over
+    the hours where the layer's marginal charge or marginal cost is nonzero
+    (Erich, 2026-10-24; with reserve offers that is every hour on reserve, and
+    t* on investment): their count, mean, 1st and 99th percentiles, recovery at R and B1, fairness (others' bill, R − B0), the
     belief's price error, and the fixed point's iterations and last change.
     ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if already solved.
     S is read from a clearing at each of the three bids."""
@@ -158,11 +156,11 @@ def summary(
     rho, rho_b1 = (recovery(tariff, scenario, x, b0) for x in (dispatch, planned))
     fair = fairness(tariff, scenario, dispatch, b0)
     wedge = alignment(tariff, market, scenario, dispatch, b0)
-    scarce = dispatch.mu > scenario.cost_res.max() + 1e-6  # μ above every offer: on the demand curve, or the requirement binds
     align = {}
     for k in LAYERS:
-        w = wedge.filter(pl.col("layer") == k)["wedge"].to_numpy()
-        hours = w[scarce] if k == "reserve" else w[np.abs(w) > 1e-6]
+        layer = wedge.filter(pl.col("layer") == k)
+        priced = (layer["marginal_charge"].abs() > 1e-6) | (layer["marginal_cost"].abs() > 1e-6)
+        hours = layer.filter(priced)["wedge"].to_numpy()  # where the layer charges or costs anything
         align[f"alignment_hours_{k}"] = int(hours.size)
         align[f"alignment_{k}"] = float(hours.mean()) if hours.size else None
         align[f"alignment_p1_{k}"] = float(np.percentile(hours, 1)) if hours.size else None

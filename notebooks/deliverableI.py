@@ -165,21 +165,21 @@ fig.tight_layout()
 fig.savefig(figures / "figure_0_genstack.png", dpi=150)
 publish(figures / "figure_0_genstack.png")
 
-fig, ax = plt.subplots(1, 2, figsize=(11, 4.5))  # own scales: ERCOT's scarcity weeks are ten times PJM's
+fig, ax = plt.subplots(1, 2, figsize=(12.5, 4.5))  # own scales: ERCOT's scarcity weeks are ten times PJM's
 for a, m in zip(ax, MARKETS):
     p = pools[m]
-    a.bar(p["week"], p["energy"] / 1e6, label="energy pool", color=POOL["energy"])
-    a.bar(p["week"], p["reserve"] / 1e6, bottom=p["energy"] / 1e6, label="reserve pool", color=POOL["reserve"])
+    a.bar(p["week"], p["energy"] / 1e6, label="energy", color=POOL["energy"])
+    a.bar(p["week"], p["reserve"] / 1e6, bottom=p["energy"] / 1e6, label="reserve", color=POOL["reserve"])
     a.bar(p["week"], p["investment"] / 1e6, bottom=(p["energy"] + p["reserve"]) / 1e6,
-          label=r"investment pool $C^{inv}\,T/8760$", color=POOL["investment"])
+          label="investment", color=POOL["investment"])
     a.axvline(WEEK, color="k", lw=0.5, alpha=0.5)
     pool_week = markets[m].C_inv * T / 8760 / 1e6
     a.set_title(m.upper())
     a.set_xlabel("week of the year")
     a.set_ylim(0, 1.08 * float((p["energy"] + p["reserve"] + p["investment"]).max()) / 1e6)
 ax[0].set_ylabel("pools by week under B0 [M$ per week]")
-fig.legend(*ax[1].get_legend_handles_labels(), loc="lower center", ncol=3, fontsize=8, frameon=False)
-fig.tight_layout(rect=(0, 0.07, 1, 1))
+fig.legend(*ax[1].get_legend_handles_labels(), loc="center left", bbox_to_anchor=(0.88, 0.5), frameon=False)
+fig.tight_layout(rect=(0, 0, 0.87, 1))
 fig.savefig(figures / "figure_0_pools.png", dpi=150)
 publish(figures / "figure_0_pools.png")
 
@@ -207,9 +207,10 @@ capacity = scenario.capacity.sum(axis=0)
 ordc = markets["ercot"].ordc_for(scenario)
 reserve_priced = {  # the reserve the market pays for; load above capacity less this and it prices scarcity
     "ercot": markets["ercot"].gamma * scenario.d_sys + ordc.widths[ordc.prices > 0].sum(),
-    "pjm": scenario.capacity.max(axis=0) + markets["pjm"].gamma * scenario.d_sys,
+    "pjm": float((scenario.units @ scenario.nameplate).max()) + markets["pjm"].gamma * scenario.d_sys,
 }
-fig, ax = plt.subplots(3, 2, figsize=(13, 10), sharex=True, sharey="row")
+plt.rcParams.update({"font.size": 13, "axes.labelsize": 14, "axes.titlesize": 15, "legend.fontsize": 13})
+fig, ax = plt.subplots(3, 2, figsize=(16, 10), sharex=True, sharey="row")
 for j, m in enumerate(MARKETS):
     ax[0, j].plot(scenario.d_sys, color="k", ls=STYLE["B0"], lw=2.2)
     ax[0, j].plot(capacity, color="grey", lw=1.2)
@@ -224,19 +225,21 @@ for j, m in enumerate(MARKETS):
         a.axvline(scenario.peak, color="grey", lw=0.8)
     ax[0, j].set_title(m.upper())
     ax[2, j].set_xlabel(f"hour of week {WEEK}")
-ax[0, 0].set_ylabel("system load, capacity and reserve [MW]")
+ax[0, 0].set_ylabel(r"$d^{\rm sys}_t$, $\sum_j \overline{u}_{jt}$ [MW]")
 ax[1, 0].set_ylim(20, 40)
-ax[1, 0].set_ylabel("energy price λ [$/MWh], 20 to 40 shown")
-ax[2, 0].set_ylabel("the load's consumption [MW]")
-legend = [Line2D([], [], color="k", ls=STYLE["B0"], lw=2.2, label="B0: system load; λ at B0; δ")]
+ax[1, 0].set_ylabel(r"$\lambda_t$ [\$/MWh], 20 to 40 shown")
+ax[2, 0].set_ylabel(r"$d_t$ [MW]")
+legend = [Line2D([], [], color="k", ls=STYLE["B0"], lw=2.2, label=r"B0: $d^{\rm sys}_t$; $\lambda_t$; $\delta_t$")]
 legend += [Line2D([], [], color=COLOR[b], label=f"R, {name}") for b, name in BUSINESSES.items()]
-legend += [Line2D([], [], color="grey", lw=1.2, label="capacity")]
+legend += [Line2D([], [], color="grey", lw=1.2, label=r"$\sum_j \overline{u}_{jt}$")]
 legend += [Line2D([], [], color="grey", ls="--", lw=1.2, label="scarcity threshold")]
-legend += [Line2D([], [], color="grey", lw=0.8, label=f"t* = {scenario.peak}, the ex-ante peak hour")]
-fig.legend(handles=legend, loc="lower center", ncol=3, fontsize=8, frameon=False)
-fig.tight_layout(rect=(0, 0.05, 1, 1))
+legend += [Line2D([], [], color="grey", lw=0.8, label=f"$t^* = {scenario.peak}$")]
+fig.legend(handles=legend, loc="center right", frameon=False)
+fig.tight_layout(rect=(0, 0, 0.86, 1))
 fig.savefig(figures / f"figure_1_week{WEEK}.png", dpi=150)
 publish(figures / f"figure_1_week{WEEK}.png")
+plt.rcParams.update(plt.rcParamsDefault)
+matplotlib.use("Agg")
 
 # %%
 # The operator's table at the base configuration: every type under each
