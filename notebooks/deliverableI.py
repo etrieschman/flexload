@@ -35,6 +35,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 
 import flexload as fl
 
@@ -115,11 +116,12 @@ def label(df: pl.DataFrame) -> pl.DataFrame:
 # average hour over the year, thermal units at nameplate; the year's average
 # and peak system load as vertical lines. Right: the energy and reserve pools
 # and the window's share of the annual investment pool, Cⁱⁿᵛ T/8760, stacked by
-# week under B0 in each market. ERCOT's investment pool is zero at this margin:
+# week under B0 in each market, on one scale; a third panel sums the year. ERCOT's investment pool is zero at this margin:
 # the scarcity weeks' energy and reserve prices pay the fleet. PJM's hard
 # requirement never binds at this margin, so its reserve pool is zero and the
 # investment pool carries the fleet's cost.
 print("\nFigure 0: the supply stack and the pools by week under B0")
+plt.rcParams.update({"font.size": 14, "axes.labelsize": 15, "axes.titlesize": 16, "legend.fontsize": 13})
 t0 = time.time()
 avg_capacity = np.mean([w.capacity.mean(axis=1) for w in weeks], axis=0)
 fuel = np.array([n.split("_")[1] for n in scenario.names])
@@ -147,25 +149,26 @@ for m, mk in markets.items():
     pools[m] = pl.DataFrame(rows)
 print(f"B0 over the year, both markets [s]:\t{time.time() - t0:.0f}")
 
-fig, a0 = plt.subplots(figsize=(7, 4.5))
+fig, a0 = plt.subplots(figsize=(11, 4))
 colors = [FUEL_COLOR.get(f, "#999999") for f in fuel[order]]
 a0.bar(left, scenario.cost_gen[order], width=avg_capacity[order], align="edge", color=colors, edgecolor="none")
 free = scenario.cost_gen[order] <= 0.0  # zero-cost units: a strip below the axis, so they show
 a0.bar(left[free], -4.0, width=avg_capacity[order][free], align="edge", color=np.array(colors)[free], edgecolor="none")
 a0.axhline(0.0, color="k", lw=0.5)
-a0.axvline(d_sys_year.mean(), color="k", lw=1, label=f"average load {d_sys_year.mean():,.0f} MW")
-a0.axvline(d_sys_year.max(), color="k", lw=1, ls="--", label=f"peak load {d_sys_year.max():,.0f} MW")
-a0.set_xlabel("cumulative capacity, average hour [MW]; zero-cost units drawn below the axis")
+a0.axvline(d_sys_year.mean(), color="k", lw=1, label=f"average load ({d_sys_year.mean():,.0f} MW)")
+a0.axvline(d_sys_year.max(), color="k", lw=1, ls="--", label=f"peak load ({d_sys_year.max():,.0f} MW)")
+a0.set_xlabel("cumulative capacity, average hour [MW]")
 a0.set_ylabel("marginal cost [$/MWh]")
 handles = [plt.Rectangle((0, 0), 1, 1, color=c) for f, c in FUEL_COLOR.items() if f in set(fuel)]
 handles += a0.get_legend_handles_labels()[0]
 labels = [f for f in FUEL_COLOR if f in set(fuel)] + a0.get_legend_handles_labels()[1]
-a0.legend(handles, labels, fontsize=8, ncol=2)
+a0.legend(handles, labels, ncol=2)
 fig.tight_layout()
 fig.savefig(figures / "figure_0_genstack.png", dpi=150)
 publish(figures / "figure_0_genstack.png")
 
-fig, ax = plt.subplots(1, 2, figsize=(12.5, 4.5))  # own scales: ERCOT's scarcity weeks are ten times PJM's
+fig, ax = plt.subplots(1, 3, figsize=(14, 3.2), gridspec_kw={"width_ratios": [4, 4, 1.6]})
+ax[1].sharey(ax[0])  # one scale for the weeks: ERCOT collects in its scarcity weeks, PJM every week
 for a, m in zip(ax, MARKETS):
     p = pools[m]
     a.bar(p["week"], p["energy"] / 1e6, label="energy", color=POOL["energy"])
@@ -173,14 +176,22 @@ for a, m in zip(ax, MARKETS):
     a.bar(p["week"], p["investment"] / 1e6, bottom=(p["energy"] + p["reserve"]) / 1e6,
           label="investment", color=POOL["investment"])
     a.axvline(WEEK, color="k", lw=0.5, alpha=0.5)
-    pool_week = markets[m].C_inv * T / 8760 / 1e6
     a.set_title(m.upper())
     a.set_xlabel("week of the year")
-    a.set_ylim(0, 1.08 * float((p["energy"] + p["reserve"] + p["investment"]).max()) / 1e6)
-ax[0].set_ylabel("pools by week under B0 [M$ per week]")
-fig.legend(*ax[1].get_legend_handles_labels(), loc="center left", bbox_to_anchor=(0.88, 0.5), frameon=False)
-fig.tight_layout(rect=(0, 0, 0.87, 1))
-fig.savefig(figures / "figure_0_pools.png", dpi=150)
+ax[0].set_ylim(0, 1.08 * max(float((p["energy"] + p["reserve"] + p["investment"]).max()) for p in pools.values()) / 1e6)
+ax[0].set_ylabel("B0 pools [M$ per week]")
+ax[1].tick_params(labelleft=False)
+annual = {m: {k: float(pools[m][k].sum()) / 1e6 for k in POOL} for m in MARKETS}  # the year: the weeks summed
+bottom = np.zeros(len(MARKETS))
+for k in POOL:
+    heights = np.array([annual[m][k] for m in MARKETS])
+    ax[2].bar([m.upper() for m in MARKETS], heights, bottom=bottom, color=POOL[k], width=0.6)
+    bottom += heights
+ax[2].set_title("the year")
+ax[2].set_ylabel("B0 pools [M$ per year]")
+fig.legend(*ax[1].get_legend_handles_labels(), loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
+fig.tight_layout()
+fig.savefig(figures / "figure_0_pools.png", dpi=150, bbox_inches="tight")
 publish(figures / "figure_0_pools.png")
 
 # %%
@@ -191,7 +202,7 @@ publish(figures / "figure_0_pools.png")
 # scarcity; the response moves system load by at most βα, invisible at this
 # scale, so B0 only); the energy price λ; the load's consumption. Columns: the
 # markets. Lines: B0 (black) and R for the mover run as a training data center
-# and as a bitcoin mine. λ is shown from 20 to 40 $/MWh (ERCOT's scarcity hours
+# and as a bitcoin mine. λ is shown from 20 to 100 $/MWh (ERCOT's scarcity hours
 # reach the thousands). The grey line marks t*, the ex-ante peak hour where τ₀
 # bills the investment pool.
 print(f"\nFigure 1: week {WEEK} at B0 and R by market and business")
@@ -209,34 +220,36 @@ reserve_priced = {  # the reserve the market pays for; load above capacity less 
     "ercot": markets["ercot"].gamma * scenario.d_sys + ordc.widths[ordc.prices > 0].sum(),
     "pjm": float((scenario.units @ scenario.nameplate).max()) + markets["pjm"].gamma * scenario.d_sys,
 }
-plt.rcParams.update({"font.size": 13, "axes.labelsize": 14, "axes.titlesize": 15, "legend.fontsize": 13})
-fig, ax = plt.subplots(3, 2, figsize=(16, 10), sharex=True, sharey="row")
+plt.rcParams.update({"font.size": 16, "axes.labelsize": 17, "axes.titlesize": 18, "legend.fontsize": 15})
+fig, ax = plt.subplots(3, 2, figsize=(22, 7.5), sharex=True, sharey="row")
 for j, m in enumerate(MARKETS):
     ax[0, j].plot(scenario.d_sys, color="k", ls=STYLE["B0"], lw=2.2)
     ax[0, j].plot(capacity, color="grey", lw=1.2)
     ax[0, j].plot(capacity - reserve_priced[m], color="grey", ls="--", lw=1.2)
-    ax[1, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"], lw=2.2)
-    ax[2, j].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=2.2)
+    ax[1, j].plot(paths[m, "B0"].lam, color="k", ls=STYLE["B0"], lw=2.2, zorder=1)  # B0 behind R
+    ax[2, j].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=2.2, zorder=1)
     for b in BUSINESSES:
         x = paths[m, "R", b]
-        ax[1, j].plot(x.lam, color=COLOR[b], ls=STYLE["R"], lw=1.2, alpha=0.9)
-        ax[2, j].plot(x.d, color=COLOR[b], ls=STYLE["R"], lw=1.2, alpha=0.9)
+        ax[1, j].plot(x.lam, color=COLOR[b], ls=STYLE["R"], lw=2.2, alpha=0.7, zorder=2)
+        ax[2, j].plot(x.d, color=COLOR[b], ls=STYLE["R"], lw=2.2, alpha=0.7, zorder=2)
     for a in ax[:, j]:
         a.axvline(scenario.peak, color="grey", lw=0.8)
     ax[0, j].set_title(m.upper())
     ax[2, j].set_xlabel(f"hour of week {WEEK}")
+for a in ax.ravel():
+    a.yaxis.set_major_locator(MaxNLocator(nbins=4))
 ax[0, 0].set_ylabel(r"$d^{\rm sys}_t$, $\sum_j \overline{u}_{jt}$ [MW]")
-ax[1, 0].set_ylim(20, 40)
-ax[1, 0].set_ylabel(r"$\lambda_t$ [\$/MWh], 20 to 40 shown")
+ax[1, 0].set_ylim(20, 100)
+ax[1, 0].set_ylabel(r"$\lambda_t$ [\$/MWh]")
 ax[2, 0].set_ylabel(r"$d_t$ [MW]")
 legend = [Line2D([], [], color="k", ls=STYLE["B0"], lw=2.2, label=r"B0: $d^{\rm sys}_t$; $\lambda_t$; $\delta_t$")]
-legend += [Line2D([], [], color=COLOR[b], label=f"R, {name}") for b, name in BUSINESSES.items()]
+legend += [Line2D([], [], color=COLOR[b], lw=2.2, alpha=0.7, label=f"R, {name}") for b, name in BUSINESSES.items()]
 legend += [Line2D([], [], color="grey", lw=1.2, label=r"$\sum_j \overline{u}_{jt}$")]
 legend += [Line2D([], [], color="grey", ls="--", lw=1.2, label="scarcity threshold")]
 legend += [Line2D([], [], color="grey", lw=0.8, label=f"$t^* = {scenario.peak}$")]
 fig.legend(handles=legend, loc="center right", frameon=False)
 fig.tight_layout(rect=(0, 0, 0.86, 1))
-fig.savefig(figures / f"figure_1_week{WEEK}.png", dpi=150)
+fig.savefig(figures / f"figure_1_week{WEEK}.png", dpi=150, bbox_inches="tight")
 publish(figures / f"figure_1_week{WEEK}.png")
 plt.rcParams.update(plt.rcParamsDefault)
 matplotlib.use("Agg")
