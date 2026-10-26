@@ -6,7 +6,7 @@
 # load bids; dispatch clears; the bill settles and the metrics are read. Then
 # the two benchmarks (B0, B1), the consistent price-taker, the table over the
 # load types, and one figure. The report's figures and tables are in
-# `deliverableI.py`.
+# `workshopI.py`.
 #
 # Run it as a script, `uv run python notebooks/walkthrough.py`, or cell by cell
 # in the `flexload (uv)` kernel. The first code cell holds every setting: the

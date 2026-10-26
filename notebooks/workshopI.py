@@ -1,5 +1,5 @@
 # %% [markdown]
-# # Deliverable I: the figures and tables of the Workshop I report (§4)
+# # Workshop I: the figures and tables of the Workshop I report (§4)
 #
 # Every exhibit sits at the base configuration and moves at most two dimensions.
 # Base: ERCOT, week 32, α = 5%, training data center, exogenous price-taker, τ₀.
@@ -16,7 +16,7 @@
 #
 # Beliefs do not move: every exhibit is the exogenous price-taker (RQ4 is about
 # beliefs; the consistent price-taker's table was dropped 2026-10-23). Run as a script,
-# `uv run python notebooks/deliverableI.py`, or cell by cell. Figures go to
+# `uv run python notebooks/workshopI.py`, or cell by cell. Figures go to
 # `notebooks/figures`, tables to `notebooks/tables` as booktabs for `\input`;
 # with `FLEXLOAD_OUT` set (in the environment or in `.env` at the repo root)
 # each .png and .tex is also copied there, flat, for the Overleaf project.
@@ -254,6 +254,43 @@ fig.legend(handles=legend, loc="center right", frameon=False)
 fig.tight_layout(rect=(0, 0, 0.86, 1))
 fig.savefig(figures / f"figure_1_week{WEEK}.png", dpi=150, bbox_inches="tight")
 publish(figures / f"figure_1_week{WEEK}.png")
+
+# %%
+# The slides: Figure 1's top row (system load against capacity and the scarcity
+# threshold) and bottom row (the load's consumption at B0 and R), each as its
+# own figure with ERCOT above PJM, so it fits beside a column of text.
+for name, row in (("scarcity", 0), ("response", 2)):
+    fig, ax = plt.subplots(2, 1, figsize=(9, 6.5), sharex=True, sharey=True)
+    for i, m in enumerate(MARKETS):
+        if row == 0:
+            ax[i].plot(scenario.d_sys, color="k", ls=STYLE["B0"], lw=2.2)
+            ax[i].plot(capacity, color="grey", lw=1.2)
+            ax[i].plot(capacity - reserve_priced[m], color="grey", ls="--", lw=1.2)
+        else:
+            ax[i].plot(scenario.delta, color="k", ls=STYLE["B0"], lw=1.2, zorder=1)
+            for b in BUSINESSES:
+                ax[i].plot(paths[m, "R", b].d, color=COLOR[b], ls=STYLE["R"], lw=2.4, alpha=0.8, zorder=2)
+        ax[i].axvline(scenario.peak, color="grey", lw=0.8)
+        ax[i].set_title(m.upper(), loc="left")
+        ax[i].yaxis.set_major_locator(MaxNLocator(nbins=4))
+    ax[1].set_xlabel(f"hour of week {WEEK}")
+    if row == 0:
+        fig.supylabel("system load, capacity [MW]")
+        handles = [
+            Line2D([], [], color="k", ls=STYLE["B0"], lw=2.2, label="system load"),
+            Line2D([], [], color="grey", lw=1.2, label="capacity"),
+            Line2D([], [], color="grey", ls="--", lw=1.2, label="scarcity threshold"),
+            Line2D([], [], color="grey", lw=0.8, label="forecast peak hour"),
+        ]
+    else:
+        fig.supylabel("the load's consumption [MW]")
+        handles = [Line2D([], [], color="k", ls=STYLE["B0"], lw=1.2, label="B0, the preferred profile")]
+        handles += [Line2D([], [], color=COLOR[b], lw=2.4, alpha=0.8, label=f"R, {nm}") for b, nm in BUSINESSES.items()]
+        handles += [Line2D([], [], color="grey", lw=0.8, label="forecast peak hour")]
+    fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, -0.01))
+    fig.tight_layout(rect=(0.02, 0.1, 1, 1))
+    fig.savefig(figures / f"slide_{name}_week{WEEK}.png", dpi=150, bbox_inches="tight")
+    publish(figures / f"slide_{name}_week{WEEK}.png")
 plt.rcParams.update(plt.rcParamsDefault)
 matplotlib.use("Agg")
 

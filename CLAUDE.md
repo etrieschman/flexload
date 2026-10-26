@@ -85,7 +85,7 @@ src/flexload/
   load.py     LoadType; PSI, BETA, P, BUSINESS; named_types; c_sigma; V; feasible; S; Belief; payoff; best_response; fixed_point; planner
   metrics.py  settle; recovery; alignment; fairness; respond; summary; table; tex
 notebooks/walkthrough.py   jupytext cells; the documentation
-notebooks/deliverableI.py  the report's figures 0-1 and tables 1-3 (§4), at the base configuration, exogenous price-taker; writes notebooks/figures, notebooks/tables and copies to FLEXLOAD_OUT
+notebooks/workshopI.py  the report's figures 0-1 and tables 1-3 (§4), at the base configuration, exogenous price-taker; writes notebooks/figures, notebooks/tables and copies to FLEXLOAD_OUT
 tests/        conftest (3-generator, 4-hour scenario); test_system, test_tariff, test_load
 docs/         assumptions.md (every non-report choice, one line each); catalog/large_load_arrangements.md (designations), catalog/bill_decomposition.md (every ERCOT charge)
 ```
@@ -118,7 +118,7 @@ Imports run one way: system ← tariff ← load ← metrics.
   every α, and nothing moved outside the scarcity hour. c^σ = 2pψβ is a constant rate.
 - 2026-10-23, later: the base window is **week 32** (the year's tightest hour; 12 of
   ERCOT's 56 scarcity hours at the 15% margin; week 31 had one). `tex` writes the
-  tabular only; the document owns caption and label. `notebooks/deliverableI.py`
+  tabular only; the document owns caption and label. `notebooks/workshopI.py`
   copies figures and tables to `FLEXLOAD_OUT` (`.env`, gitignored).
 - 2026-10-23: `Belief(dispatch, consistent)` replaces the flag beside the dispatch;
   `payoff` is V − B on the expected outcome and `best_response` builds the tildes;

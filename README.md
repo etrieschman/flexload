@@ -36,13 +36,13 @@ Setup, tests, the walkthrough and the report's figures and tables:
 uv sync
 uv run pytest -q
 uv run python notebooks/walkthrough.py     # one window end to end, with the benchmarks and the metrics
-uv run python notebooks/deliverableI.py    # Figures 0-2 and Tables 1-3 of the Workshop I report (§4)
+uv run python notebooks/workshopI.py    # Figures 0-2 and Tables 1-3 of the Workshop I report (§4)
 ```
 
 The first run fetches the data; the walkthrough takes about a minute, the
 figures and tables about four. Both also run cell by cell in the `flexload (uv)` kernel.
 Set `FLEXLOAD_OUT` in the environment or in `.env` at the repo root to a folder
-and `deliverableI.py` also copies each .png and .tex there, flat, for the Overleaf project.
+and `workshopI.py` also copies each .png and .tex there, flat, for the Overleaf project.
 
 Data comes from [rts-gmlc](https://github.com/etrieschman/rts-gmlc), a git
 dependency imported as `rts_gmlc` at the top of `system.py`, fetched once into
