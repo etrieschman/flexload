@@ -28,7 +28,7 @@ Code decisions are in the code and its history. Values marked placeholder are no
 ## The load
 
 - **The load's preferred profile is a fixed share of system load in every hour.** A data center's profile is flatter than system load; closing this needs a load profile.
-- **Two workloads with placeholder values: training (ψ 100, β 0.5, energy conserved over the week) and inference (χ 500, β 0.1, nothing conserved); κ 0.1 for both.** Closing this needs operator data on deferrable work and on the value of served requests.
+- **Two workloads with placeholder values: training (ψ 100, β 0.5, energy conserved over the week) and inference (χ 500, β 0.1, nothing conserved); κ 0.2 for both.** Closing this needs operator data on deferrable work and on the value of served requests.
 - **Value is a strike on each MWh below the preferred profile plus a quadratic penalty on deviation.** Real costs of deferral depend on job length and deadlines; `hours_at_bound` in the summary shows how much of a result does not depend on this form.
 - **The load's within-hour variability is normal with sd κ d_t, independent across intervals and of the system's error (κ placeholder).** GPU load swings are correlated across a site and may follow system conditions; closing this needs telemetry.
 - **The tolerance β is symmetric and the same in every hour.**
