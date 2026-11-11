@@ -26,6 +26,8 @@ def small() -> Scenario:
         unit=np.array([0, 1, 2]),
         names=("base", "mid", "peaker"),
         error_fit=Normal(0.0, 10.0),  # MW; sets the ERCOT curve
+        trip=np.full(3, 0.01),  # each unit trips in 1 hour of 100
+        error=np.zeros((T, 12)),  # the realized net-load error: none
     )
 
 

@@ -17,6 +17,7 @@ import numpy as np
 import polars as pl
 
 from .load import Belief, LoadType, S, best_response, c_sigma, fixed_point, planner
+from .realized import shed, worst
 from .system import Dispatch, Market, Scenario
 from .tariff import LAYERS, Tariff
 
@@ -149,6 +150,7 @@ def summary(
     scenario: Scenario,
     belief: str = "exogenous",
     b1: tuple | None = None,
+    draws: int = 200,
 ) -> dict:
     """One row: welfare at B0, B1 and R, efficiency and its share of the value
     of flexibility, the bill by layer at B0, R and B1, Δᵏ_t at R, signed, over
@@ -156,6 +158,14 @@ def summary(
     (Erich, 2026-10-24; with reserve offers that is every hour on reserve, and
     t* on investment): their count, mean, 1st and 99th percentiles, recovery at R and B1, fairness (others' bill, R − B0), the fleet's capacity rent at B0, R and B1, the
     belief's price error, and the fixed point's iterations and last change.
+    Then what the construct costs and what it covers, at B0 and at R: the
+    reserve pool C^res, the ORDC's cost C^ORDC, load shed over ``draws`` draws
+    of realized dispatch (the window's MWh: its mean, and the mean of the worst
+    5% of draws, since shed is rare and a percentile is often zero; the
+    seed is the window's start, so every construct and type sees the same
+    draws), and the worst hour's shed if the largest one or two thermal units
+    trip. ``hours_at_bound`` counts the hours where the bid sits at the
+    tolerance β δ_t, where the bid does not depend on V.
     ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if already solved.
     S is read from a clearing at each of the three bids."""
     dispatch, b0, believed, history = respond(theta, tariff, market, scenario, belief)
@@ -183,6 +193,18 @@ def summary(
         for x in (b0, dispatch, planned)
     )
     value = S_B1 - S_B0
+    realized = {}
+    for at, x in (("_b0", b0), ("", dispatch)):
+        mwh = shed(scenario, x, theta, np.random.default_rng(scenario.start), draws).sum(axis=1)
+        realized |= {
+            f"reserve_cost{at}": float(x.C_res.sum()),
+            f"C_ordc{at}": float(x.C_ordc.sum()),
+            f"shed{at}": float(mwh.mean()),
+            f"shed_tail{at}": float(np.sort(mwh)[-max(draws // 20, 1):].mean()),
+            f"worst_1{at}": float(worst(scenario, x, 1).max()),
+            f"worst_2{at}": float(worst(scenario, x, 2).max()),
+        }
+    at_bound = np.isclose(np.abs(dispatch.d_bid - scenario.delta), theta.beta * scenario.delta, atol=1e-4)
     return {
         "tariff": tariff.name,
         "type": theta.name,
@@ -207,6 +229,8 @@ def summary(
         "rent_b0": rent(scenario, b0),
         "rent": rent(scenario, dispatch),
         "rent_b1": rent(scenario, planned),
+        **realized,
+        "hours_at_bound": int(at_bound.sum()) if theta.beta > 0 else 0,
         "price_error": float(np.abs(believed.lam - dispatch.lam).mean()),
         "iterations": len(history) or None,
         "last_change": history[-1] if history else None,
