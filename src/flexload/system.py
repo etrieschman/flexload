@@ -31,11 +31,10 @@ VOLL = 5000.0  # c^VOLL, the value of lost load, $/MWh: c^shed, and c^pen where 
 PJM_PENALTY, PJM_SECOND_STEP, PJM_EXTENDED = 850.0, 300.0, 0.12
 
 # Placeholder annualized capital cost by RTS-GMLC category, $/kW-year (RTS-GMLC
-# has none). Round numbers set 2026-10-25 so the fleet's annual cost, 1,757 M$,
-# is close to the rent ERCOT's prices pay it at the 0.08 margin (1,768 M$),
-# where PJM's requirement is still slack; before that they were about 1.4×
-# these and summed to 2,500 M$. Replace with a cited table before a result
-# depends on the investment layer. docs/assumptions.md #1.
+# has none). Round numbers that sum to 1,757 M$ a year for the fleet. The
+# reserve margin is then set where ERCOT's rent pays that (0.027,
+# notebooks/tune_reserve_margin.py). Replace with a cited table before a
+# result depends on the investment layer.
 INVESTMENT_COST_PER_KW_YEAR = {
     "Nuclear": 400.0,
     "Coal": 250.0,
@@ -137,7 +136,7 @@ def scenario(
     start: int = 32 * 168,
     T: int = 168,
     alpha: float = 0.05,
-    reserve_margin: float | None = 0.08,
+    reserve_margin: float | None = 0.027,
     reserve_offer: float = 0.1,
 ) -> Scenario:
     """Hours ``[start, start + T)`` of RTS-GMLC's day-ahead series at one node,
@@ -145,12 +144,12 @@ def scenario(
     ``alpha`` sets the load's size: δ is that share of system load, hour by
     hour, carved out of the RTS total so δ + d° is the data. ``reserve_margin``
     scales both loads so the tightest hour has that margin (``tighten``). The
-    default 0.08 is the margin at which ERCOT's prices pay the fleet's annual
-    investment cost through rents (``C_inv`` = 0 over the year; the cost
-    placeholders are set near what those rents pay, and below 0.08 PJM's
-    requirement binds; notebooks/tune_reserve_margin.py). ``reserve_offer`` sets the
+    default 0.027 is the margin at which ERCOT's prices pay the fleet's annual
+    investment cost through rents (``C_inv`` = 0 over the year;
+    notebooks/tune_reserve_margin.py). Every unit is available in every hour,
+    so this is spare capacity net of outages. ``reserve_offer`` sets the
     reserve offer cʳⱼ = reserve_offer × cᵘⱼ on thermal blocks (RTS-GMLC has
-    none; docs/assumptions.md #5); renewables and hydro offer none."""
+    none); renewables and hydro offer none."""
     lo, hi = start, start + T
     load = _year(rts.timeseries("load", "day_ahead"))[lo:hi]
     if len(load) != T:
@@ -224,15 +223,15 @@ def _net_load_error() -> np.ndarray:
 def windows(
     T: int = 168,
     alpha: float = 0.05,
-    reserve_margin: float | None = 0.08,
+    reserve_margin: float | None = 0.027,
     reserve_offer: float = 0.1,
 ) -> list[Scenario]:
     """The year cut into operating windows of T hours, under one tightness
     scale: the annual tightest hour has the margin and the other windows keep
-    their seasonal slack. At the default 0.08, ERCOT's energy and reserve
-    prices pay the fleet's annual investment cost and PJM is short about
-    1.2 B$ (notebooks/tune_reserve_margin.py). The last 24 hours of the year
-    fall outside the 52 windows."""
+    their seasonal slack. At the default 0.027, ERCOT's energy and reserve
+    prices pay the fleet's annual investment cost and PJM's leave about
+    1.1 B$ to its pool (notebooks/tune_reserve_margin.py). The last 24 hours
+    of the year fall outside the 52 windows."""
     hours = _year(rts.timeseries("load", "day_ahead")).height
     return tighten(
         [

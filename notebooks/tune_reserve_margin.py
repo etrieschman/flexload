@@ -12,14 +12,17 @@
 # over the year, the fleet's rent (its profit, revenue above fuel and reserve
 # offers, scaled to 8,760 hours), its investment cost Σ_j cⁱⁿᵛ_j ū_j on nameplate, the pool
 # max(0, cost − rent), the scarcity hours in the year and in week 32, and the
-# energy shed. Under ERCOT an hour is scarce when μ_t is on the demand curve,
-# above every reserve offer; under PJM when load is shed.
+# energy shed. An hour is scarce when μ_t is above every reserve offer.
 #
-# Set 2026-10-25 at 0.08, the tightest margin at which PJM's requirement is
-# slack: at 0.07 PJM sheds load. ERCOT's rent there is 1,768 M$, and the
-# investment-cost placeholders are round numbers that sum to 1,757 M$, so its
-# pool is zero and PJM's is about 1,210 M$. With the costs as they were
-# (2,500 M$) ERCOT's rent reached them only near 0.06, with PJM in shortage.
+# Set 2026-11-11 at 0.027, where ERCOT's rent (1,760 M$) meets the fleet's
+# investment cost (1,757 M$, round placeholders), so its pool is zero. There
+# ERCOT's reserve price is above $100 in 112 hours of the year and above
+# $1,000 in 35, and it sheds 630 MWh of other load in 8 hours to hold R̲. PJM's
+# rent is 686 M$ and its pool about 1,070 M$; its curve prices above $100 in
+# 13 hours and it sheds nothing. Every unit is available in every hour, so
+# 0.027 is spare capacity net of outages. Earlier settings: 0.08 until
+# 2026-11-11, with γ d_sys in the reserve rows, a day-ahead forecast error
+# (sd 580 MW) and a hard row for PJM.
 #
 # Run as a script, `uv run python notebooks/tune_reserve_margin.py`, or cell by
 # cell; about 70 s per market and margin. The table goes to `notebooks/tables`,
@@ -49,7 +52,7 @@ T = 168
 WEEK = 32  # the window with the year's tightest hour
 ALPHA = 0.05
 RESERVE_OFFER = 0.1
-MARGINS = (0.10, 0.08, 0.06, 0.05, 0.04, 0.03)
+MARGINS = (0.10, 0.08, 0.06, 0.05, 0.04, 0.03, 0.027)
 MARKETS = ("ercot", "pjm", "n-1")
 M = 1e6  # dollars per M$
 here = Path(__file__).parent if "__file__" in globals() else Path(".")
