@@ -9,9 +9,9 @@ Code decisions are in the code and its history. Values marked placeholder are no
 - **Hourly dispatch on the hour's mean of the real-time series stands for the real-time market.** Real-time markets clear every five minutes on a forecast, not on what the hour turned out to be; closing this needs five-minute dispatch with a forecast.
 - **Every unit is online and available in every hour, with linear costs.** Real reserve comes from committed units within their ramp limits, and units are out for maintenance and forced outages; closing this needs unit commitment and an outage schedule.
 - **Load is scaled so the year's tightest hour has a 6% margin, where ERCOT's rent pays the fleet.** Real margins come from entry and exit and are quoted on installed capacity, before outages; closing this needs a long-run model.
-- **Dispatch has no outages.** A real fleet has several percent of its capacity out at any time; closing this needs outage states that last and a dispatch that sees them.
+- **Dispatch does not model outages.** A real fleet has several percent of its capacity out at any time; closing this needs outage states that last and a dispatch that sees them.
 - **Investment costs are round numbers by category, 1,757 M$ a year (placeholder).** Closing this needs a cited cost table.
-- **Reserve offers are 10% of a unit's fuel cost, and wind, solar and hydro offer none (placeholder).** RTS-GMLC has no reserve offers, and hydro does provide reserve; closing this needs offer data.
+- **Reserve offers are 10% of a unit's fuel cost, and wind, solar and hydro do not offer reserve (placeholder).** RTS-GMLC does not give reserve offers, and hydro does provide reserve; closing this needs offer data.
 - **Other load is inelastic and is shed at 5,000 $/MWh.** Real load has some response below the cap, and the value of lost load varies by customer.
 - **Storage, synchronous condensers and concentrated solar are left out.** Storage is a large source of reserve in ERCOT today.
 

@@ -5,8 +5,7 @@
 # lays it out: fix the market, window and tariff; form the load's belief; the
 # load bids; dispatch clears; the bill settles and the metrics are read. Then
 # the two benchmarks (B0, B1), the consistent price-taker, the table over the
-# load types, and one figure. The report's figures and tables are in
-# `workshopI.py`.
+# load types, and one figure. The results tables are in `results.py`.
 #
 # Run it as a script, `uv run python notebooks/walkthrough.py`, or cell by cell
 # in the `flexload (uv)` kernel. The first code cell holds every setting: the
@@ -36,12 +35,12 @@ np.set_printoptions(precision=1, suppress=True, linewidth=140)
 # Settings. Every knob the walkthrough turns is here and nowhere else.
 print("\nSettings")
 T = 168  # hours per operating window: one week
-WEEK = 29  # the window shown: mid August, the week with the year's tightest hour
+WEEK = 29  # the window shown: late July, the week with the year's tightest hour
 ALPHA = 0.1  # the load's size, its share of system load
 RESERVE_MARGIN = 0.06  # spare capacity at the year's tightest hour (the default)
-RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
-RESERVE = "ercot"  # "ercot" (demand curve) or "pjm" (hard requirement)
-BUSINESS = "training"  # or "inference": what the data center runs, which sets (psi, chi, beta, A, kappa)
+RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC does not give reserve offers
+RESERVE = "ercot"  # the construct: "ercot" (a curve), "pjm" (two steps) or "n-1" (a hard requirement)
+WORKLOAD = "training"  # or "inference": what the data center runs, which sets (psi, chi, beta, A, kappa)
 TYPE = "mover"  # inflexible, mover, controllable, emergency, curtailable
 print(f"RTS-GMLC data folder:\t{rts.data_root()}")
 print(f"RTS-GMLC git ref:\t{rts.REF[:8]}")
@@ -60,7 +59,7 @@ scenario = weeks[WEEK]
 market = fl.Market(fl.named_ordcs(scenario)[RESERVE])
 market = replace(market, C_inv=fl.C_inv(market, weeks))
 tau = fl.named_tariffs(scenario)["tau_0_pjm" if RESERVE == "n-1" else f"tau_0_{RESERVE}"]  # each construct with its market's tariff
-theta = fl.named_types(T, BUSINESS)[TYPE]
+theta = fl.named_types(T, WORKLOAD)[TYPE]
 offer = fl.c_sigma(theta, scenario.delta)
 d_firm = theta.d_firm(scenario.delta)
 edges, prices = market.curve()  # the ORDC as steps: MW of reserve above the contingency, and the price below each edge
@@ -76,7 +75,7 @@ print(f"this window's tightest-hour margin [fraction]:\t{fl.margin(scenario):.3f
 print(f"ex-ante peak hour t* [hour of window]:\t{scenario.peak}")
 print(f"annual investment-layer cost C_inv [M$]:\t{market.C_inv / 1e6:,.1f}")
 print(f"this window's share of C_inv [M$]:\t{market.C_inv * T / 8760 / 1e6:,.2f}")
-print(f"hour-ahead net-load error, normal fit (m, v) [MW]:\t{scenario.error_fit.m:,.0f}, {scenario.error_fit.v:,.0f}")
+print(f"within-hour net-load error, normal fit (m, v) [MW]:\t{scenario.error_fit.m:,.0f}, {scenario.error_fit.v:,.0f}")
 print(f"ORDC first steps (edge above the contingency [MW], price below it [$/MWh]):\t{steps[:4]} ...")
 
 # %%
@@ -187,7 +186,7 @@ print(f"welfare at B1 [$]:\t{row['S_B1']:,.0f}")
 # today's tariff, one row per type.
 print("\nThe table: one row per type (RQ1)")
 t0 = time.time()
-types = fl.named_types(T, BUSINESS)
+types = fl.named_types(T, WORKLOAD)
 table = fl.table(types, {tau.name: tau}, [market], [scenario])
 print(f"table time [s]:\t{time.time() - t0:.0f}")
 print("welfare by type [$]:")

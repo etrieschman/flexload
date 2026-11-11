@@ -28,19 +28,19 @@ HOURS_PER_YEAR = 8760
 VOLL = 5000.0  # c^VOLL, the value of lost load, $/MWh: c^shed, and c^pen where a construct prices at it
 # The two markets' reserve rules at one scale (2026-11-11). Both hold their top
 # price up to the same multiple of the largest unit, so they differ in price
-# and in the curve above that level, not in the level. PJM's memo gives 1.95
+# and in the curve above that level, not in the level. PJM's reserves memo gives 1.95
 # (synchronized reserve at 1.3 times the largest online contingency, primary
 # reserve at 1.5 times that); ERCOT's 3,000 MW minimum contingency level is
-# about 2.2 times its largest unit (from memory).
+# about 2.2 times its largest unit, 1,375 MW.
 CONTINGENCY_MULTIPLE = 2.0
 # PJM prices its requirement at $850/MWh and 190 MW more at $300/MWh, here
-# 190 MW over the memo's 1,600 MW contingency. ERCOT shifts the error's mean up
+# 190 MW over that memo's 1,600 MW contingency. ERCOT shifts the error's mean up
 # by half its standard deviation.
 PJM_PENALTY, PJM_SECOND_STEP, PJM_EXTENDED = 850.0, 300.0, 190.0 / 1600.0
 ERCOT_SHIFT = 0.5
 
 # Placeholder annualized capital cost by RTS-GMLC category, $/kW-year (RTS-GMLC
-# has none). Round numbers that sum to 1,757 M$ a year for the fleet. The
+# does not give one). Round numbers that sum to 1,757 M$ a year for the fleet. The
 # reserve margin, 0.06, is where ERCOT's rent pays that (1,796 M$); PJM's rent
 # there is 683 M$ (notebooks/tune_reserve_margin.py). Replace with a cited
 # table before a result depends on the investment layer.
@@ -123,9 +123,9 @@ class Scenario:
 
     @property
     def renewable(self) -> np.ndarray:
-        """(J,) True for wind, solar and hydro columns, by name. They offer no
-        reserve and are no contingency: their output is a forecast quantity,
-        whose error is ε."""
+        """(J,) True for wind, solar and hydro columns, by name. They do not
+        offer reserve and do not count as a contingency: their output is a
+        forecast quantity, and its error is in ε."""
         return np.array([any(tag in n.upper() for tag in ("WIND", "PV", "HYDRO")) for n in self.names], dtype=bool)
 
     @property
@@ -158,10 +158,10 @@ def scenario(
     default 0.06 is the margin at which ERCOT's prices pay the fleet's annual
     investment cost through rents (1,796 M$ against 1,757 M$;
     notebooks/tune_reserve_margin.py), and neither market sheds load in
-    dispatch there. Dispatch has no outages: every unit is available in every
-    hour, so the margin is capacity that is spare at the tightest hour. ``reserve_offer`` sets the
-    reserve offer cʳⱼ = reserve_offer × cᵘⱼ on thermal blocks (RTS-GMLC has
-    none); renewables and hydro offer none."""
+    dispatch there. Dispatch does not model outages: every unit is available
+    in every hour, so the margin is capacity that is spare at the tightest hour. ``reserve_offer`` sets the
+    reserve offer cʳⱼ = reserve_offer × cᵘⱼ on thermal blocks, since RTS-GMLC
+    does not give reserve offers; wind, solar and hydro do not offer reserve."""
     lo, hi = start, start + T
     if hi > HOURS_PER_YEAR:
         raise ValueError(f"hours {lo}:{hi} are not in the year")
@@ -477,7 +477,7 @@ class Market:
             )
         else:
             cons["capacity"] = u + r <= scenario.capacity
-        if scenario.renewable.any():  # wind, solar and hydro offer no reserve
+        if scenario.renewable.any():  # wind, solar and hydro do not offer reserve
             cons["renewable_reserve"] = r[np.flatnonzero(scenario.renewable), :] == 0
         cons["reserve"] = (  # dual: the height of the step in use, μ_t
             cp.sum(z, axis=0) == cp.sum(r, axis=0) + sigma + (d - d_firm)
@@ -580,11 +580,9 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
     the fleet's investment cost on nameplate less the rent it earns on the B0
     path (δ, 0), in $. The rent is the fleet's profit, revenue above fuel and
     reserve offers (:func:`flexload.metrics.rent`), summed over the windows and
-    scaled to 8760 hours. (Until 2026-10-25 the rent was Σ ν ū on nameplate,
-    which overstated renewables' rent and missed the reserve row's dual on the
-    binding unit under PJM.) The floor at zero: a market whose prices overpay
-    the fleet has nothing left to collect, so the layer bills zero rather than
-    crediting the load. ``clear`` prorates it to the window by T/8760. Cached
+    scaled to 8760 hours. It is floored at zero: where prices already pay the
+    fleet, the layer bills zero and does not credit the load. ``clear``
+    prorates it to the window by T/8760. Cached
     under ``~/.cache/flexload`` by market fields and the year's data; the cache
     keeps the signed value."""
     key = None

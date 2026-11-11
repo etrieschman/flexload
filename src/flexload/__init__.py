@@ -1,4 +1,4 @@
-"""flexload: tariff design for price-responsive loads, the memo transcribed.
+"""flexload: reserve constructs and tariffs for a price-responsive load, the report transcribed.
 
     weeks    = windows(T=168, alpha=0.1, reserve_margin=0.06)   # ω and δ: the year in operating windows
     market   = Market(named_ordcs(weeks[29])["ercot"])           # the environment: a reserve construct

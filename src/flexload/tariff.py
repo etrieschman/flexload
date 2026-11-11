@@ -21,7 +21,7 @@ split pool is exact either way.
 Slots: ``ex_ante`` reads Cᵏ from the dispatch at the load's preferred profile
 (δ, 0), the B0 dispatch ``b0``, as ERCOT procures reserve against a forecast;
 otherwise from the dispatch at the bid, ``realized``. Each layer's form sets it. ``credit`` pays a load that sells reserve μᵀσ.
-``exempt_curtailable`` frees a curtailable load from the reserve charge (τ₅).
+``exempt_curtailable`` frees a curtailable load from the reserve charge.
 
 Formulas are cvxpy expressions on numbers or variables alike; read ``.value``.
 """
@@ -92,8 +92,8 @@ class Share:
 
 @dataclass(frozen=True)
 class TwoPart:
-    """Bᵏ = φ x + T. The marginal rate is φ = phi · price per hour (γμ_t on
-    reserve, price = μ; on investment price = 1 so φ = phi in $/MWh). The lump
+    """Bᵏ = φ x + T. The marginal rate is φ = phi · price per hour (on
+    reserve price = μ; on investment price = 1, so φ = phi in $/MWh). The lump
     sum T is the load's share, by its believed base x̂, of what φ leaves of the
     pool, so the layer still collects Cᵏ; or ``T`` if given."""
 
@@ -217,7 +217,7 @@ class Tariff:
 
 
 def _divide(a, b) -> np.ndarray:
-    """a / b where b > 0, else 0: the hours outside a layer's window have no base and no cost."""
+    """a / b where b > 0, else 0: outside a layer's window the base and the cost are both zero."""
     a, b = np.asarray(a, float), np.asarray(b, float)
     return np.divide(a, b, out=np.zeros_like(b), where=b > 0)
 
@@ -229,7 +229,7 @@ def named_tariffs(scenario: Scenario) -> dict[str, Tariff]:
     """τ₀, today's tariff, in each market's form: energy at the margin and
     reserve split ex ante in both. ``tau_0_pjm`` splits the investment layer
     ex ante on the peak hour t*, as a capacity charge does. ``tau_0_ercot``
-    does not bill it: ERCOT has no capacity payment, so generators recover
+    does not bill it: ERCOT does not pay for capacity, so generators recover
     their fixed cost from prices or not at all. Pair each with its construct."""
     every_hour, peak = np.ones(scenario.T), peak_hour(scenario.d_sys)
     layers = dict(energy=Marginal(hours=every_hour, ex_ante=False), reserve=Share(hours=every_hour, ex_ante=True), credit=True, exempt_curtailable=False)

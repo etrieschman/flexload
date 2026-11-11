@@ -21,7 +21,7 @@
 # price is above $100 in 61 hours of the year and above $1,000 in 34; PJM's is
 # above $100 in 17 and never above $1,000; PJM's rent is 683 M$, so about
 # 1,070 M$ of the fleet's cost is left to its pool. Neither market sheds load
-# in dispatch. Dispatch has no outages, so the margin is capacity that is spare
+# in dispatch. Dispatch does not model outages, so the margin is capacity that is spare
 # at the tightest hour. Earlier settings: 0.08 until 2026-11-11 (γ d_sys in
 # the reserve rows, a day-ahead forecast error, a hard row for PJM), then
 # 0.027 for a few hours (ERCOT's level at one unit).
