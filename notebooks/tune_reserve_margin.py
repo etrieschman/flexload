@@ -49,8 +49,8 @@ T = 168
 WEEK = 32  # the window with the year's tightest hour
 ALPHA = 0.05
 RESERVE_OFFER = 0.1
-MARGINS = (0.12, 0.10, 0.08, 0.07)
-MARKETS = ("ercot", "pjm")
+MARGINS = (0.20, 0.15, 0.12, 0.10, 0.08)
+MARKETS = ("ercot", "pjm", "n-1")
 M = 1e6  # dollars per M$
 here = Path(__file__).parent if "__file__" in globals() else Path(".")
 figures, tables = here / "figures", here / "tables"
@@ -74,7 +74,7 @@ for margin in MARGINS:
             b0 = mk.clear(w, w.delta, np.zeros(T), np.zeros(T))
             rent += fleet_rent(w, b0)  # the fleet's profit: revenue above fuel and reserve offers
             shed += float(b0.shed.sum())
-            hot = int(((b0.mu > w.cost_res.max() + 1e-6) if m == "ercot" else (b0.shed > 1e-6)).sum())
+            hot = int((b0.mu > w.cost_res.max() + 1e-6).sum())  # the reserve price is above every reserve offer
             scarce["year"] += hot
             scarce["week"] += hot if i == WEEK else 0
         rows.append(
@@ -98,7 +98,7 @@ table.write_csv(tables / "tune_reserve_margin.csv")
 # The figure: rent against margin in each market, with the fleet's cost. The
 # margin is set where ERCOT's line crosses the cost.
 fig, ax = plt.subplots(figsize=(6, 3.5))
-for m, color in zip(MARKETS, ("#BF5700", "#1F4E79")):
+for m, color in zip(MARKETS, ("#BF5700", "#1F4E79", "#703078")):
     t = table.filter(pl.col("market") == m).sort("margin")
     ax.plot(t["margin"] * 100, t["rent [M$]"], marker="o", color=color, label=f"{m.upper()} rent")
 ax.axhline(table["fleet cost [M$]"][0], color="k", lw=1, ls="--", label="fleet investment cost")

@@ -29,11 +29,12 @@ def small() -> Scenario:
     )
 
 
-@pytest.fixture(params=["pjm", "ercot"])
+@pytest.fixture(params=["n-1", "pjm", "ercot"])
 def market(request, small) -> Market:
-    return Market(named_ordcs(small)[request.param], gamma=0.0, C_inv=C_INV)
+    return Market(named_ordcs(small)[request.param], C_inv=C_INV)
 
 
 @pytest.fixture
-def pjm(small) -> Market:
-    return Market(named_ordcs(small)["pjm"], gamma=0.0, C_inv=C_INV)
+def n1(small) -> Market:
+    """The hard requirement on the largest unit."""
+    return Market(named_ordcs(small)["n-1"], C_inv=C_INV)

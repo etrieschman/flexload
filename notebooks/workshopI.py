@@ -219,9 +219,10 @@ print(f"time [s]:\t{time.time() - t0:.0f}")
 
 capacity = scenario.capacity.sum(axis=0)
 edges, prices = markets["ercot"].curve()  # MW above the contingency, and the price below each edge
+largest = float((scenario.units @ (scenario.nameplate * ~scenario.renewable)).max())
 reserve_priced = {  # the reserve the market pays for; load above capacity less this and it prices scarcity
-    "ercot": markets["ercot"].gamma * scenario.d_sys + markets["ercot"].ordc.min_contingency + edges[prices > 0].max(),
-    "pjm": float((scenario.units @ (scenario.nameplate * ~scenario.renewable)).max()) + markets["pjm"].gamma * scenario.d_sys,
+    "ercot": markets["ercot"].ordc.min_contingency + edges[prices > 0].max(),
+    "pjm": largest + markets["pjm"].curve()[0].max(),
 }
 plt.rcParams.update({"font.size": 16, "axes.labelsize": 17, "axes.titlesize": 18, "legend.fontsize": 15})
 fig, ax = plt.subplots(3, 2, figsize=(22, 7.5), sharex=True, sharey="row")
