@@ -38,7 +38,7 @@ print("\nSettings")
 T = 168  # hours per operating window: one week
 WEEK = 29  # the window shown: mid August, the week with the year's tightest hour
 ALPHA = 0.05  # the load's size, its share of system load
-RESERVE_MARGIN = 0.027  # spare capacity at the year's tightest hour (the default)
+RESERVE_MARGIN = 0.06  # spare capacity at the year's tightest hour (the default)
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
 RESERVE = "ercot"  # "ercot" (demand curve) or "pjm" (hard requirement)
 BUSINESS = "training"  # or "inference": what the data center runs, which sets (psi, chi, beta, A, kappa)

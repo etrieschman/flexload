@@ -26,16 +26,24 @@ import rts_gmlc as rts
 
 HOURS_PER_YEAR = 8760
 VOLL = 5000.0  # c^VOLL, the value of lost load, $/MWh: c^shed, and c^pen where a construct prices at it
-# PJM's curve (placeholders, 2026-11-11): $850/MWh up to the requirement, then $300/MWh for 190 MW more.
-# The second step is kept as a share of the contingency, 190 MW over a largest contingency of about 1,600 MW.
-PJM_PENALTY, PJM_SECOND_STEP, PJM_EXTENDED = 850.0, 300.0, 0.12
-PJM_PRIMARY = 1.5  # PJM's 10-minute requirement, primary reserve, is 1.5 times the largest contingency
+# The two markets' reserve rules at one scale (2026-11-11). Both hold their top
+# price up to the same multiple of the largest unit, so they differ in price
+# and in the curve above that level, not in the level. PJM's memo gives 1.95
+# (synchronized reserve at 1.3 times the largest online contingency, primary
+# reserve at 1.5 times that); ERCOT's 3,000 MW minimum contingency level is
+# about 2.2 times its largest unit (from memory).
+CONTINGENCY_MULTIPLE = 2.0
+# PJM prices its requirement at $850/MWh and 190 MW more at $300/MWh, here
+# 190 MW over the memo's 1,600 MW contingency. ERCOT shifts the error's mean up
+# by half its standard deviation.
+PJM_PENALTY, PJM_SECOND_STEP, PJM_EXTENDED = 850.0, 300.0, 190.0 / 1600.0
+ERCOT_SHIFT = 0.5
 
 # Placeholder annualized capital cost by RTS-GMLC category, $/kW-year (RTS-GMLC
-# has none). Round numbers that sum to 1,757 M$ a year for the fleet. At the
-# 0.027 reserve margin ERCOT's rent pays 1,075 M$ of that and PJM's 795 M$
-# (notebooks/tune_reserve_margin.py). Replace with a cited table before a
-# result depends on the investment layer.
+# has none). Round numbers that sum to 1,757 M$ a year for the fleet. The
+# reserve margin, 0.06, is where ERCOT's rent pays that (1,796 M$); PJM's rent
+# there is 683 M$ (notebooks/tune_reserve_margin.py). Replace with a cited
+# table before a result depends on the investment layer.
 INVESTMENT_COST_PER_KW_YEAR = {
     "Nuclear": 400.0,
     "Coal": 250.0,
@@ -137,7 +145,7 @@ def scenario(
     start: int = 29 * 168,
     T: int = 168,
     alpha: float = 0.05,
-    reserve_margin: float | None = 0.027,
+    reserve_margin: float | None = 0.06,
     reserve_offer: float = 0.1,
 ) -> Scenario:
     """Hours ``[start, start + T)`` of RTS-GMLC's real-time series at one node,
@@ -147,12 +155,11 @@ def scenario(
     ``alpha`` sets the load's size: δ is that share of system load, hour by
     hour, carved out of the RTS total so δ + d° is the data. ``reserve_margin``
     scales both loads so the tightest hour has that margin (``tighten``). The
-    default 0.027 is held from 2026-11-11: the inflexible baseline then sheds
-    502 MWh a year under ERCOT, 0.0011% of energy, near a common reliability
-    standard, and ERCOT's rent pays 1,075 M$ of the fleet's 1,757 M$
-    (notebooks/tune_reserve_margin.py). ERCOT's rent pays all of it only near
-    0.010. Dispatch has no outages: every unit is available in every hour, so
-    the margin is capacity that is spare at the tightest hour. ``reserve_offer`` sets the
+    default 0.06 is the margin at which ERCOT's prices pay the fleet's annual
+    investment cost through rents (1,796 M$ against 1,757 M$;
+    notebooks/tune_reserve_margin.py), and neither market sheds load in
+    dispatch there. Dispatch has no outages: every unit is available in every
+    hour, so the margin is capacity that is spare at the tightest hour. ``reserve_offer`` sets the
     reserve offer cʳⱼ = reserve_offer × cᵘⱼ on thermal blocks (RTS-GMLC has
     none); renewables and hydro offer none."""
     lo, hi = start, start + T
@@ -226,13 +233,13 @@ def _net_load_error() -> np.ndarray:
 def windows(
     T: int = 168,
     alpha: float = 0.05,
-    reserve_margin: float | None = 0.027,
+    reserve_margin: float | None = 0.06,
     reserve_offer: float = 0.1,
 ) -> list[Scenario]:
     """The year cut into operating windows of T hours, under one tightness
     scale: the annual tightest hour has the margin and the other windows keep
-    their seasonal slack. At the default 0.027, ERCOT's prices leave 683 M$
-    of the fleet's investment cost to its pool and PJM's leave 963 M$
+    their seasonal slack. At the default 0.06, ERCOT's prices pay the fleet's
+    investment cost and PJM's leave about 1,070 M$ of it
     (notebooks/tune_reserve_margin.py). Week 29 holds the year's tightest
     hour. The last 24 hours of the year fall outside the 52 windows."""
     hours = HOURS_PER_YEAR
@@ -347,21 +354,28 @@ def named_ordcs(scenario: Scenario) -> dict[str, ORDC]:
     """The constructs, on the scenario's fleet and forecast error. A
     contingency is a thermal unit: a wind farm's output is a forecast quantity,
     and its error is in ε.
-    ``ercot``: R̲ at the largest thermal unit's nameplate, a normal error, the
-    expectation at VOLL.
-    ``pjm``: 1.5 times the largest online thermal unit (PJM's primary reserve,
-    its 10-minute requirement), then PJM's second step read as an error (zero,
-    or the extended requirement with probability 300/850), the expectation at
-    the $850 penalty factor.
+    ``ercot``: R̲ at twice the largest thermal unit's nameplate; the normal
+    fit to the error with its mean shifted up by half its standard deviation;
+    the expectation at VOLL less the highest fuel cost. ERCOT prices at VOLL
+    less the energy price, so it runs short of reserve before it sheds load;
+    the highest fuel cost stands for the energy price at scarcity.
+    ``pjm``: twice the largest online thermal unit (primary reserve, its
+    10-minute requirement), then PJM's second step read as an error (zero, or
+    the extended requirement with probability 300/850), the expectation at the
+    $850 penalty factor.
     ``n-1``: the largest online thermal unit, no error, the maximum: a hard
     requirement."""
     thermal = (scenario.units @ ~scenario.renewable > 0).astype(float)
     largest = float((scenario.units @ (scenario.nameplate * ~scenario.renewable)).max())
+    m, v = scenario.error_fit.m, scenario.error_fit.v
     second = PJM_SECOND_STEP / PJM_PENALTY
     extended = Points(np.array([0.0, PJM_EXTENDED * largest]), np.array([1.0 - second, second]))
     return {
-        "ercot": ORDC(largest, np.zeros(thermal.size), scenario.error_fit, Expectation(VOLL), "ercot"),
-        "pjm": ORDC(0.0, PJM_PRIMARY * thermal, extended, Expectation(PJM_PENALTY), "pjm"),
+        "ercot": ORDC(
+            CONTINGENCY_MULTIPLE * largest, np.zeros(thermal.size), Normal(m + ERCOT_SHIFT * v, v),
+            Expectation(VOLL - float(scenario.cost_gen.max())), "ercot",
+        ),
+        "pjm": ORDC(0.0, CONTINGENCY_MULTIPLE * thermal, extended, Expectation(PJM_PENALTY), "pjm"),
         "n-1": ORDC(0.0, thermal, Points(np.zeros(1), np.ones(1)), Maximum(), "n-1"),
     }
 

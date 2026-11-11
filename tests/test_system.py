@@ -135,7 +135,7 @@ def test_ordc_contingency_is_the_largest_thermal_unit(small):
         unit=np.append(small.unit, 3),
         names=(*small.names, "wind"),
     )
-    assert named_ordcs(windy)["ercot"].min_contingency == 100.0  # the 100 MW unit, not the 900 MW wind farm
+    assert np.isclose(named_ordcs(windy)["ercot"].min_contingency, 200.0)  # twice the 100 MW unit, not the 900 MW wind farm
 
 
 def test_tighten_sets_the_annual_tightest_hour(small):
@@ -147,20 +147,21 @@ def test_tighten_sets_the_annual_tightest_hour(small):
 
 def test_pjm_curve_is_two_steps(small):
     edges, prices = steps(named_ordcs(small)["pjm"], 5000.0)
-    assert np.allclose(edges, [0.0, 12.0])  # the contingency, then 12% of the 100 MW unit
+    assert np.allclose(edges, [0.0, 100.0 * 190.0 / 1600.0])  # the contingency, then 190 MW over 1,600 of the 100 MW unit
     assert np.allclose(prices, [850.0, 300.0])
 
 
 def test_ercot_prices_the_contingency_at_the_top_price(small):
     edges, prices = steps(named_ordcs(small)["ercot"], 5000.0)
-    assert edges[0] == 0.0 and prices[0] == 5000.0  # VOLL up to R̲
+    top = 5000.0 - small.cost_gen.max()  # VOLL less the highest fuel cost
+    assert edges[0] == 0.0 and prices[0] == top  # the top price up to R̲
     assert np.all(np.diff(edges) > 0) and np.all(np.diff(prices) < 0)
-    assert prices[1] <= 0.5 * 5000.0 + 1e-9  # above R̲ a mean-zero error is exceeded half the time
+    assert 0.5 * top < prices[1] < 0.75 * top  # a mean shifted up half a standard deviation is exceeded 69% of the time
 
 
 def test_pjm_runs_short_of_reserve_before_it_sheds_load(small):
     """Spare capacity of 60 MW against a 100 MW unit. The hard requirement
-    sheds load to free reserve; PJM's curve runs 40 MW short at $850."""
+    sheds load to free reserve; PJM's curve runs short at $850."""
     tight = replace(small, d_other=np.full(small.T, 180.0))  # d_sys = 200 of 260 MW
     hard = b0(Market(named_ordcs(tight)["n-1"], C_inv=0.0), tight)
     curve = b0(Market(named_ordcs(tight)["pjm"], C_inv=0.0), tight)

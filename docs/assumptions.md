@@ -8,7 +8,7 @@ Code decisions are in the code and its history. Values marked placeholder are no
 - **One node.** Real reserve is deliverable or not by location, and prices differ by node; closing this needs the network and a reserve requirement per zone.
 - **Hourly dispatch on the hour's mean of the real-time series stands for the real-time market.** Real-time markets clear every five minutes on a forecast, not on what the hour turned out to be; closing this needs five-minute dispatch with a forecast.
 - **Every unit is online and available in every hour, with linear costs.** Real reserve comes from committed units within their ramp limits, and units are out for maintenance and forced outages; closing this needs unit commitment and an outage schedule.
-- **Load is scaled so the year's tightest hour has a 2.7% margin, where the baseline sheds 0.0011% of energy.** Real margins come from entry and exit and are quoted on installed capacity, before outages; closing this needs a long-run model. At this margin ERCOT's rent pays 1,075 M$ of the fleet's 1,757 M$.
+- **Load is scaled so the year's tightest hour has a 6% margin, where ERCOT's rent pays the fleet.** Real margins come from entry and exit and are quoted on installed capacity, before outages; closing this needs a long-run model.
 - **Dispatch has no outages.** A real fleet has several percent of its capacity out at any time; closing this needs outage states that last and a dispatch that sees them.
 - **Investment costs are round numbers by category, 1,757 M$ a year (placeholder).** Closing this needs a cited cost table.
 - **Reserve offers are 10% of a unit's fuel cost, and wind, solar and hydro offer none (placeholder).** RTS-GMLC has no reserve offers, and hydro does provide reserve; closing this needs offer data.
@@ -18,17 +18,17 @@ Code decisions are in the code and its history. Values marked placeholder are no
 ## The reserve construct
 
 - **One reserve product.** ERCOT and PJM each buy several (regulation, spinning, non-spinning, 30-minute); ERCOT splits one aggregate curve across them.
-- **A contingency is a thermal unit: 400 MW, the largest. PJM's requirement is 1.5 times the largest online one.** ERCOT's Board sets its minimum contingency level (3,000 MW); PJM's primary reserve is 1.5 times its synchronized reserve, with a 3,000 MW floor and a 30-minute product above it.
-- **ERCOT's error is one normal for the year, fit to within-hour net-load error (sd 132 MW, 1.3% of peak).** ERCOT fits 24 normals by season and hour block to hour-ahead reserve error, about 1.6% of its peak (from memory), and shifts the mean; closing this needs the fit by block.
+- **A contingency is a thermal unit: 400 MW, the largest. Both markets hold their top price up to twice that.** PJM's primary reserve is 1.95 times its largest online contingency, with a 3,000 MW floor and a 30-minute product above it; ERCOT's Board sets 3,000 MW, 2.2 times its 1,375 MW unit. Our largest unit is 4% of peak where theirs are 1 to 1.6%, so both hold more reserve against load here than in practice.
+- **ERCOT's error is one normal for the year, fit to within-hour net-load error (sd 132 MW, 1.3% of peak), its mean shifted up by half a standard deviation.** ERCOT fits 24 normals by season and hour block to hour-ahead reserve error (summer 2023: mean 861 MW, sd 1,289 MW, about 1.5% of peak) and applies the same shift; closing this needs the fit by block and its mean.
 - **The error is each five-minute net-load value less its hour's mean.** The operator does not know the hour's mean in advance, so the real error also has a forecast miss; closing this needs a forecast model or published hour-ahead data.
-- **ERCOT's penalty price is the value of lost load.** ERCOT uses the value of lost load less the energy price.
-- **PJM's second step is read as an error: 48 MW with probability 0.35, at a penalty of $850 (placeholder scaling).** PJM did not fit a distribution; its factors come from a 2007 event, and its second step is 190 MW, kept here as 12% of the contingency (from memory).
+- **ERCOT's penalty price is the value of lost load less the fleet's highest fuel cost ($179).** ERCOT uses the value of lost load less the energy price in each interval; the highest fuel cost stands for that price at scarcity.
+- **PJM's second step is read as an error: 48 MW with probability 0.35, at a penalty of $850.** PJM did not fit a distribution; its factors come from a 2007 event, and its second step is 190 MW, kept here as 190 over the 1,600 MW contingency in its memo.
 - **The curve is steps priced at their left edge, and a normal's tail below 2% of the penalty price is priced at zero.** The true curve is smooth; more steps close this.
 
 ## The load
 
 - **The load's preferred profile is a fixed share of system load in every hour.** A data center's profile is flatter than system load; closing this needs a load profile.
-- **Two workloads with placeholder values: training (ψ 100, β 0.5, energy conserved over the week) and inference (χ 1,000, β 0.1, nothing conserved); κ 0.1 for both.** Closing this needs operator data on deferrable work and on the value of served requests.
+- **Two workloads with placeholder values: training (ψ 100, β 0.5, energy conserved over the week) and inference (χ 500, β 0.1, nothing conserved); κ 0.1 for both.** Closing this needs operator data on deferrable work and on the value of served requests.
 - **Value is a strike on each MWh below the preferred profile plus a quadratic penalty on deviation.** Real costs of deferral depend on job length and deadlines; `hours_at_bound` in the summary shows how much of a result does not depend on this form.
 - **The load's within-hour variability is normal with sd κ d_t, independent across intervals and of the system's error (κ placeholder).** GPU load swings are correlated across a site and may follow system conditions; closing this needs telemetry.
 - **The tolerance β is symmetric and the same in every hour.**

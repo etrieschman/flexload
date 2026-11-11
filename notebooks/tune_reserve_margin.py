@@ -14,17 +14,17 @@
 # max(0, cost − rent), the scarcity hours in the year and in week 29, and the
 # energy shed. An hour is scarce when μ_t is above every reserve offer.
 #
-# Held at 0.027 from 2026-11-11, on real-time hourly conditions and a
-# within-hour error (sd 132 MW). There the inflexible baseline sheds 502 MWh a
-# year under ERCOT (0.0011% of energy), all in week 29; ERCOT's reserve price
-# is above $100 in 30 hours and above $1,000 in 14; its rent is 1,075 M$
-# against a fleet cost of 1,757 M$, so its pool is 683 M$. PJM's rent is
-# 795 M$ and its pool 963 M$; it prices above $100 in 26 hours and sheds
-# nothing. ERCOT's rent pays the whole fleet only near 0.010, with 2,076 MWh
-# shed in 18 hours. Dispatch has no outages, so the margin is capacity that is
-# spare at the tightest hour. Earlier: 0.08 until 2026-11-11, with γ d_sys in
-# the reserve rows, a day-ahead forecast error (sd 580 MW) and a hard row for
-# PJM.
+# Set 2026-11-11 at 0.06, where ERCOT's rent (1,796 M$) meets the fleet's
+# investment cost (1,757 M$, round placeholders). Both markets price their top
+# price up to twice the largest unit (800 MW); ERCOT's curve then pays down to
+# about $190 at 1,138 MW and PJM's pays $300 to 848 MW. At 0.06 ERCOT's reserve
+# price is above $100 in 61 hours of the year and above $1,000 in 34; PJM's is
+# above $100 in 17 and never above $1,000; PJM's rent is 683 M$, so about
+# 1,070 M$ of the fleet's cost is left to its pool. Neither market sheds load
+# in dispatch. Dispatch has no outages, so the margin is capacity that is spare
+# at the tightest hour. Earlier settings: 0.08 until 2026-11-11 (γ d_sys in
+# the reserve rows, a day-ahead forecast error, a hard row for PJM), then
+# 0.027 for a few hours (ERCOT's level at one unit).
 
 # %%
 import time
@@ -50,7 +50,7 @@ T = 168
 WEEK = 29  # the window with the year's tightest hour
 ALPHA = 0.05
 RESERVE_OFFER = 0.1
-MARGINS = (0.06, 0.03, 0.027, 0.02, 0.015, 0.01)
+MARGINS = (0.10, 0.08, 0.07, 0.065, 0.06, 0.055)
 MARKETS = ("ercot", "pjm", "n-1")
 M = 1e6  # dollars per M$
 here = Path(__file__).parent if "__file__" in globals() else Path(".")

@@ -50,7 +50,7 @@ np.set_printoptions(precision=1, suppress=True, linewidth=140)
 T = 168
 WEEK = 29  # the window: the year's tightest hour is in it
 ALPHA = 0.05
-RESERVE_MARGIN = 0.027
+RESERVE_MARGIN = 0.06
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
 TYPE = "mover"  # the type Figure 1 and Table 3 follow
 BUSINESSES = {"training": "training DC", "inference": "inference DC"}
