@@ -37,7 +37,7 @@ np.set_printoptions(precision=1, suppress=True, linewidth=140)
 print("\nSettings")
 T = 168  # hours per operating window: one week
 WEEK = 29  # the window shown: mid August, the week with the year's tightest hour
-ALPHA = 0.05  # the load's size, its share of system load
+ALPHA = 0.1  # the load's size, its share of system load
 RESERVE_MARGIN = 0.06  # spare capacity at the year's tightest hour (the default)
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
 RESERVE = "ercot"  # "ercot" (demand curve) or "pjm" (hard requirement)

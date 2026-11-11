@@ -48,7 +48,7 @@ pl.Config.set_tbl_width_chars(200)
 # Settings: the base configuration of the deliverable, and the margins to sweep.
 T = 168
 WEEK = 29  # the window with the year's tightest hour
-ALPHA = 0.05
+ALPHA = 0.1
 RESERVE_OFFER = 0.1
 MARGINS = (0.10, 0.08, 0.07, 0.065, 0.06, 0.055)
 MARKETS = ("ercot", "pjm", "n-1")

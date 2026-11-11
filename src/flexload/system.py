@@ -144,7 +144,7 @@ def _year(df: pl.DataFrame) -> pl.DataFrame:
 def scenario(
     start: int = 29 * 168,
     T: int = 168,
-    alpha: float = 0.05,
+    alpha: float = 0.1,
     reserve_margin: float | None = 0.06,
     reserve_offer: float = 0.1,
 ) -> Scenario:
@@ -232,7 +232,7 @@ def _net_load_error() -> np.ndarray:
 
 def windows(
     T: int = 168,
-    alpha: float = 0.05,
+    alpha: float = 0.1,
     reserve_margin: float | None = 0.06,
     reserve_offer: float = 0.1,
 ) -> list[Scenario]:
