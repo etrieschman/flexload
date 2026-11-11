@@ -4,7 +4,7 @@
     market   = Market(named_ordcs(weeks[29])["ercot"])           # the environment: a reserve construct
     market   = replace(market, C_inv=C_inv(market, weeks))                      # annual cost of the investment layer
     scenario = weeks[29]
-    tau      = named_tariffs(scenario)["tau_0"]                  # τ, today's tariff
+    tau      = named_tariffs(scenario)["tau_0_ercot"]            # τ, today's tariff in ERCOT's form
     theta    = named_types(scenario.T, "training")["mover"]            # θ
     b0       = market.clear(scenario, scenario.delta, 0, c_sigma(theta, scenario.delta))   # B0
     d, sigma = best_response(theta, tau, scenario, Belief(b0, False), b0)                   # R, exogenous price-taker

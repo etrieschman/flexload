@@ -98,7 +98,7 @@ weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN, reserve_offe
 scenario = weeks[WEEK]
 markets = {m: fl.Market(fl.named_ordcs(scenario)[m]) for m in MARKETS}
 markets = {m: replace(mk, C_inv=fl.C_inv(mk, weeks)) for m, mk in markets.items()}
-tau = fl.named_tariffs(scenario)["tau_0"]
+tau = {m: fl.named_tariffs(scenario)[f"tau_0_{m}"] for m in MARKETS}  # each market with its form of today's tariff
 types = {b: fl.named_types(T, b) for b in BUSINESSES}
 print(f"setup time [s]:\t{time.time() - t0:.0f}")
 for m, mk in markets.items():  # the pool: the fleet's investment cost net of its rents, floored at zero
@@ -214,7 +214,7 @@ paths = {}
 for m, mk in markets.items():
     paths[m, "B0"] = mk.clear(scenario, scenario.delta, np.zeros(T), np.zeros(T))
     for b in BUSINESSES:
-        paths[m, "R", b], _, _, _ = fl.respond(types[b][TYPE], tau, mk, scenario, "exogenous")
+        paths[m, "R", b], _, _, _ = fl.respond(types[b][TYPE], tau[m], mk, scenario, "exogenous")
 print(f"time [s]:\t{time.time() - t0:.0f}")
 
 capacity = scenario.capacity.sum(axis=0)
@@ -304,10 +304,9 @@ print(f"\nThe operator's table: market × type × business under tau_0, week {WE
 t0 = time.time()
 rows = pl.concat(
     [
-        fl.table(types[b], {"tau_0": tau}, list(markets.values()), [scenario]).with_columns(
-            pl.lit(b).alias("business")
-        )
+        fl.table(types[b], {tau[m].name: tau[m]}, [mk], [scenario]).with_columns(pl.lit(b).alias("business"))
         for b in BUSINESSES
+        for m, mk in markets.items()
     ],
     how="vertical_relaxed",
 )
@@ -445,8 +444,8 @@ t0 = time.time()
 grid = []
 for alpha in ALPHAS:
     window = fl.windows(T=T, alpha=alpha, reserve_margin=RESERVE_MARGIN, reserve_offer=RESERVE_OFFER)[WEEK]
-    tau_alpha = fl.named_tariffs(window)["tau_0"]
     for m, mk in markets.items():
+        tau_alpha = fl.named_tariffs(window)[f"tau_0_{m}"]
         for b in BUSINESSES:
             theta = types[b][TYPE]
             b1 = fl.planner(theta, mk, window)

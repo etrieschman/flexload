@@ -59,7 +59,7 @@ weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN, reserve_offe
 scenario = weeks[WEEK]
 market = fl.Market(fl.named_ordcs(scenario)[RESERVE])
 market = replace(market, C_inv=fl.C_inv(market, weeks))
-tau = fl.named_tariffs(scenario)["tau_0"]
+tau = fl.named_tariffs(scenario)["tau_0_pjm" if RESERVE == "n-1" else f"tau_0_{RESERVE}"]  # each construct with its market's tariff
 theta = fl.named_types(T, BUSINESS)[TYPE]
 offer = fl.c_sigma(theta, scenario.delta)
 d_firm = theta.d_firm(scenario.delta)
@@ -188,7 +188,7 @@ print(f"welfare at B1 [$]:\t{row['S_B1']:,.0f}")
 print("\nThe table: one row per type (RQ1)")
 t0 = time.time()
 types = fl.named_types(T, BUSINESS)
-table = fl.table(types, fl.named_tariffs(scenario), [market], [scenario])
+table = fl.table(types, {tau.name: tau}, [market], [scenario])
 print(f"table time [s]:\t{time.time() - t0:.0f}")
 print("welfare by type [$]:")
 print(table.select("type", "S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility"))

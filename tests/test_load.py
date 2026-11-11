@@ -93,7 +93,7 @@ def test_reserve_offer_where_price_beats_cost():
 
 
 def test_welfare_ordering_B0_R_B1(n1, small):
-    tau = named_tariffs(small)["tau_0"]
+    tau = named_tariffs(small)["tau_0_pjm"]
     for name in ("mover", "controllable", "inflexible", "curtailable"):
         theta = named_types(small.T)[name]
         d1, s1 = planner(theta, n1, small)
@@ -107,7 +107,7 @@ def test_welfare_ordering_B0_R_B1(n1, small):
 def test_fixed_point_converges_within_one_merit_order_step(n1, small):
     theta = named_types(small.T)["mover"]
     b0 = n1.clear(small, small.delta, np.zeros(small.T), c_sigma(theta, small.delta))
-    d, sigma, dispatch, _, history = fixed_point(theta, named_tariffs(small)["tau_0"], n1, small, b0)
+    d, sigma, dispatch, _, history = fixed_point(theta, named_tariffs(small)["tau_0_pjm"], n1, small, b0)
     assert history[-1] < 1e-3
     assert np.isclose(d.sum(), small.delta.sum(), atol=1e-3)
 
@@ -118,7 +118,7 @@ def test_fixed_point_cycles_when_the_band_straddles_a_step(n1, small):
     straddling = replace(small, d_other=small.d_other + np.array([0.0, 0.0, 0.0, 10.0]))
     theta = named_types(small.T)["mover"]
     b0 = n1.clear(straddling, straddling.delta, np.zeros(straddling.T), c_sigma(theta, straddling.delta))
-    _, _, _, _, history = fixed_point(theta, named_tariffs(straddling)["tau_0"], n1, straddling, b0, max_iter=30)
+    _, _, _, _, history = fixed_point(theta, named_tariffs(straddling)["tau_0_pjm"], n1, straddling, b0, max_iter=30)
     assert history[-1] > 1e-3
 
 
@@ -133,14 +133,14 @@ def test_share_on_realized_pools_recovers_exactly(n1, small):
 def test_summary_row(n1, small):
     for name in ("mover", "curtailable"):
         theta = named_types(small.T)[name]
-        row = summary(theta, named_tariffs(small)["tau_0"], n1, small)
-        assert row["efficiency"] >= -1e-4 and row["tariff"] == "tau_0"
+        row = summary(theta, named_tariffs(small)["tau_0_pjm"], n1, small)
+        assert row["efficiency"] >= -1e-4 and row["tariff"] == "tau_0_pjm"
         assert row["worst_1"] < 1e-6 and row["shed_tail"] >= row["shed"] >= 0.0  # the requirement covers one trip
 
 
 def test_table_and_choice(small):
     market = Market(named_ordcs(small)["ercot"], C_inv=520_000.0)
-    tariffs = named_tariffs(small)
+    tariffs = {"tau_0_ercot": named_tariffs(small)["tau_0_ercot"]}  # ERCOT's construct with ERCOT's tariff
     types = {k: v for k, v in named_types(small.T).items() if k in ("mover", "controllable")}
     t = table(types, tariffs, [market], [small])
     assert t.shape[0] == 2 and (t["efficiency"] >= -1e-4).all()
@@ -153,7 +153,20 @@ def test_curtailable_load_bids_at_least_its_firm_level(n1, small):
     theta = named_types(tight.T)["curtailable"]
     d_firm = theta.d_firm(tight.delta)
     d1, s1 = planner(theta, n1, tight)
-    dispatch, _, _, _ = respond(theta, named_tariffs(tight)["tau_0"], n1, tight)
+    dispatch, _, _, _ = respond(theta, named_tariffs(tight)["tau_0_pjm"], n1, tight)
     assert np.all(d1 >= d_firm - 1e-6) and np.all(dispatch.d_bid >= d_firm - 1e-6)
     planned = n1.clear(tight, d1, s1, c_sigma(theta, tight.delta), d_firm)
     assert welfare(theta, n1, tight, planned) >= welfare(theta, n1, tight, dispatch) - 1e-4
+
+
+def test_ercots_tariff_does_not_bill_the_investment_layer(small):
+    """Under tau_0_ercot nobody is billed for the investment layer, so its
+    recovery is the whole pool: what the fleet's rent did not pay stays unpaid."""
+    market = Market(named_ordcs(small)["ercot"], C_inv=520_000.0)
+    theta = named_types(small.T)["mover"]
+    tau = named_tariffs(small)["tau_0_ercot"]
+    dispatch, b0, _, _ = respond(theta, tau, market, small)
+    bill = tau.bill(dispatch.d, dispatch.sigma, dispatch, small.d_other, b0)
+    assert float(bill["investment"].value) == 0.0
+    assert np.isclose(recovery(tau, small, dispatch, b0)["investment"], dispatch.C_inv)
+    assert np.allclose(tau.marginal(dispatch.d, dispatch, small.d_other, b0)["investment"], 0.0)

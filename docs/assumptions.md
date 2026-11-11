@@ -45,5 +45,5 @@ Code decisions are in the code and its history. Values marked placeholder are no
 
 ## Tariff and settlement
 
-- **Today's tariff bills energy at the price, the reserve pool by load share in every hour, and the investment pool on the forecast peak hour.** ERCOT's four coincident peaks recover transmission cost, and PJM's capacity charge uses five peaks; the forecast peak hour stands for both.
-- **The investment pool is the fleet's cost less its rent over the year, floored at zero and spread evenly over the weeks.** PJM recovers this through a capacity auction, and ERCOT through prices alone.
+- **Today's tariff bills energy at the price and the reserve pool by load share in every hour. PJM's form also bills the investment pool on the forecast peak hour; ERCOT's form does not bill it.** PJM's capacity charge uses five peaks, and the forecast peak hour stands for them. ERCOT's four coincident peaks recover transmission cost, which the model leaves out.
+- **The investment pool is the fleet's cost less its rent over the year, floored at zero and spread evenly over the weeks.** PJM recovers this through a capacity auction. Under ERCOT nobody pays it: what prices leave unrecovered stays with the generators until some exit.
