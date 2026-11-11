@@ -87,7 +87,7 @@ src/flexload/
   realized.py reserve; shed; worst
   metrics.py  settle; recovery; alignment; fairness; respond; summary; table; tex
 notebooks/walkthrough.py          jupytext cells; the documentation
-notebooks/workshopI.py            the report's figures and tables (§4) at the base configuration, exogenous price-taker; writes notebooks/figures, notebooks/tables and copies to FLEXLOAD_OUT (`.env`, gitignored)
+notebooks/results.py              the results tables, in cells: settings at the top (weeks, constructs, workloads, beliefs); rows cached in notebooks/tables/rows.csv; writes .csv and .tex to notebooks/tables and copies .tex to FLEXLOAD_OUT (`.env`, gitignored)
 notebooks/tune_reserve_margin.py  the reserve-margin sweep behind the calibration
 tests/        conftest (3-generator, 4-hour scenario); test_system, test_tariff, test_load, test_realized
 docs/         assumptions.md (each assumption and its gap with reality); specifications.md (frozen); catalog/large_load_arrangements.md (designations), catalog/bill_decomposition.md (every ERCOT charge)

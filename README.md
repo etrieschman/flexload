@@ -30,19 +30,19 @@ dispatch = market.clear(scenario, d, sigma, offer)
 bill = fl.settle(tau, scenario, dispatch, b0)
 ```
 
-Setup, tests, the walkthrough and the report's figures and tables:
+Setup, tests, the walkthrough and the results tables:
 
 ```bash
 uv sync
 uv run pytest -q
 uv run python notebooks/walkthrough.py     # one window end to end, with the benchmarks and the metrics
-uv run python notebooks/workshopI.py    # Figures 0-2 and Tables 1-3 of the Workshop I report (§4)
+uv run python notebooks/results.py      # the results tables; settings at the top, rows cached in notebooks/tables
 ```
 
 The first run fetches the data; the walkthrough takes about a minute, the
-figures and tables about four. Both also run cell by cell in the `flexload (uv)` kernel.
+tables about ten on a first run and seconds once their rows are cached. Both also run cell by cell in the `flexload (uv)` kernel.
 Set `FLEXLOAD_OUT` in the environment or in `.env` at the repo root to a folder
-and `workshopI.py` also copies each .png and .tex there, flat, for the Overleaf project.
+and `results.py` also copies each .tex there, flat, for the Overleaf project.
 
 Data comes from [rts-gmlc](https://github.com/etrieschman/rts-gmlc), a git
 dependency imported as `rts_gmlc` at the top of `system.py`, fetched once into

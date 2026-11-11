@@ -17,7 +17,7 @@ import numpy as np
 import polars as pl
 
 from .load import Belief, LoadType, S, best_response, c_sigma, fixed_point, planner
-from .realized import shed, worst
+from .realized import reserve, shed, worst
 from .system import Dispatch, Market, Scenario
 from .tariff import LAYERS, Tariff
 
@@ -159,7 +159,8 @@ def summary(
     t* on investment): their count, mean, 1st and 99th percentiles, recovery at R and B1, fairness (others' bill, R − B0), the fleet's capacity rent at B0, R and B1, the
     belief's price error, and the fixed point's iterations and last change.
     Then what the construct costs and what it covers, at B0 and at R: the
-    reserve pool C^res, the ORDC's cost C^ORDC, load shed over ``draws`` draws
+    reserve pool C^res, the ORDC's cost C^ORDC, the lowest reserve held, load shed
+    over ``draws`` draws
     of realized dispatch (the window's MWh: its mean, and the mean of the worst
     5% of draws, since shed is rare and a percentile is often zero; the
     seed is the window's start, so every construct and type sees the same
@@ -199,6 +200,7 @@ def summary(
         realized |= {
             f"reserve_cost{at}": float(x.C_res.sum()),
             f"C_ordc{at}": float(x.C_ordc.sum()),
+            f"reserve_min{at}": float(reserve(x).min()),
             f"shed{at}": float(mwh.mean()),
             f"shed_tail{at}": float(np.sort(mwh)[-max(draws // 20, 1):].mean()),
             f"worst_1{at}": float(worst(scenario, x, 1).max()),
