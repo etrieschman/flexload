@@ -36,7 +36,7 @@ np.set_printoptions(precision=1, suppress=True, linewidth=140)
 # Settings. Every knob the walkthrough turns is here and nowhere else.
 print("\nSettings")
 T = 168  # hours per operating window: one week
-WEEK = 32  # the window shown: mid August, the week with the year's tightest hour
+WEEK = 29  # the window shown: mid August, the week with the year's tightest hour
 ALPHA = 0.05  # the load's size, its share of system load
 RESERVE_MARGIN = 0.027  # spare capacity at the year's tightest hour (the default)
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers

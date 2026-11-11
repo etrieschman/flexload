@@ -48,7 +48,7 @@ np.set_printoptions(precision=1, suppress=True, linewidth=140)
 # %%
 # Settings: the base configuration and the dimensions each exhibit moves.
 T = 168
-WEEK = 32  # the window: the year's tightest hour is in it
+WEEK = 29  # the window: the year's tightest hour is in it
 ALPHA = 0.05
 RESERVE_MARGIN = 0.027
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers

@@ -72,8 +72,8 @@ class LoadType:
 # loses the requests it does not serve: a strike, nothing conserved, a narrow
 # tolerance.
 WORKLOAD = {
-    "training": (100.0, 0.0, 0.5, "window", 0.05),
-    "inference": (0.0, 1000.0, 0.1, "elastic", 0.05),
+    "training": (100.0, 0.0, 0.5, "window", 0.1),
+    "inference": (0.0, 1000.0, 0.1, "elastic", 0.1),
 }
 BETA_MIN = 0.1  # the cut the data center commits to whatever it runs; the contract keeps 1 − β_min firm
 FIRM = 1.0 - BETA_MIN

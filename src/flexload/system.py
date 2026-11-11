@@ -29,11 +29,12 @@ VOLL = 5000.0  # c^VOLL, the value of lost load, $/MWh: c^shed, and c^pen where 
 # PJM's curve (placeholders, 2026-11-11): $850/MWh up to the requirement, then $300/MWh for 190 MW more.
 # The second step is kept as a share of the contingency, 190 MW over a largest contingency of about 1,600 MW.
 PJM_PENALTY, PJM_SECOND_STEP, PJM_EXTENDED = 850.0, 300.0, 0.12
+PJM_PRIMARY = 1.5  # PJM's 10-minute requirement, primary reserve, is 1.5 times the largest contingency
 
 # Placeholder annualized capital cost by RTS-GMLC category, $/kW-year (RTS-GMLC
-# has none). Round numbers that sum to 1,757 M$ a year for the fleet. The
-# reserve margin is then set where ERCOT's rent pays that (0.027,
-# notebooks/tune_reserve_margin.py). Replace with a cited table before a
+# has none). Round numbers that sum to 1,757 M$ a year for the fleet. At the
+# 0.027 reserve margin ERCOT's rent pays 1,075 M$ of that and PJM's 795 M$
+# (notebooks/tune_reserve_margin.py). Replace with a cited table before a
 # result depends on the investment layer.
 INVESTMENT_COST_PER_KW_YEAR = {
     "Nuclear": 400.0,
@@ -86,7 +87,7 @@ class Scenario:
     start: int = 0  # first hour of the window in the year
     error_fit: Normal | None = None  # (m, v) of the normal fit to the year's net-load error, MW
     trip: np.ndarray | None = None  # (J,) hourly probability that the column's unit trips, 1/MTTF; zero for renewables
-    error: np.ndarray | None = None  # (T, 12) the window's net-load error in each five-minute interval, hour-ahead, MW
+    error: np.ndarray | None = None  # (T, 12) the window's net-load error: each five-minute value less the hour's mean, MW
 
     @property
     def T(self) -> int:
@@ -133,35 +134,38 @@ def _year(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def scenario(
-    start: int = 32 * 168,
+    start: int = 29 * 168,
     T: int = 168,
     alpha: float = 0.05,
     reserve_margin: float | None = 0.027,
     reserve_offer: float = 0.1,
 ) -> Scenario:
-    """Hours ``[start, start + T)`` of RTS-GMLC's day-ahead series at one node,
-    February 29 dropped.
+    """Hours ``[start, start + T)`` of RTS-GMLC's real-time series at one node,
+    each hour at the mean of its twelve five-minute values, February 29
+    dropped. Dispatch stands for the real-time market, so it clears on what the
+    hour was; what moves within the hour is the imbalance (``error``).
     ``alpha`` sets the load's size: δ is that share of system load, hour by
     hour, carved out of the RTS total so δ + d° is the data. ``reserve_margin``
     scales both loads so the tightest hour has that margin (``tighten``). The
-    default 0.027 is the margin at which ERCOT's prices pay the fleet's annual
-    investment cost through rents (``C_inv`` = 0 over the year;
-    notebooks/tune_reserve_margin.py). Every unit is available in every hour,
-    so this is spare capacity net of outages. ``reserve_offer`` sets the
+    default 0.027 is held from 2026-11-11: the inflexible baseline then sheds
+    502 MWh a year under ERCOT, 0.0011% of energy, near a common reliability
+    standard, and ERCOT's rent pays 1,075 M$ of the fleet's 1,757 M$
+    (notebooks/tune_reserve_margin.py). ERCOT's rent pays all of it only near
+    0.010. Dispatch has no outages: every unit is available in every hour, so
+    the margin is capacity that is spare at the tightest hour. ``reserve_offer`` sets the
     reserve offer cʳⱼ = reserve_offer × cᵘⱼ on thermal blocks (RTS-GMLC has
     none); renewables and hydro offer none."""
     lo, hi = start, start + T
-    load = _year(rts.timeseries("load", "day_ahead"))[lo:hi]
-    if len(load) != T:
-        raise ValueError(f"hours {lo}:{hi} are not in the day-ahead series")
-    total = sum(load[str(a)].to_numpy().astype(float) for a in (1, 2, 3))
+    if hi > HOURS_PER_YEAR:
+        raise ValueError(f"hours {lo}:{hi} are not in the year")
+    total = _real_time("load")[1][lo:hi].mean(axis=1).sum(axis=1)  # the hour's mean, the three areas summed
     delta = alpha * total
 
     blocks = rts.offer_blocks().filter(pl.col("mw") > 0.0)
-    series = {k: _year(rts.timeseries(k, "day_ahead"))[lo:hi] for k in RENEWABLE}
-    renewable = {
-        c: s for s in series.values() for c in s.columns if c not in rts.TIME_COLS
-    }
+    renewable = {}  # unit -> (T,) available output, the hour's mean
+    for kind in RENEWABLE:
+        names, mw = _real_time(kind)
+        renewable |= {uid: mw[lo:hi, :, i].mean(axis=1) for i, uid in enumerate(names)}
     cols = []  # (cost_gen, cost_res, cost_inv, capacity (T,), nameplate, unit, name, trip)
     for u, g in enumerate(rts.gen().iter_rows(named=True)):
         uid, cat = g["gen_uid"], g["category"]
@@ -169,7 +173,7 @@ def scenario(
             continue
         inv = INVESTMENT_COST_PER_KW_YEAR[cat] * 1000.0
         if uid in renewable:
-            avail = renewable[uid][uid].to_numpy().astype(float)
+            avail = renewable[uid]
             cols.append(
                 (float(g["vom"] or 0.0), 0.0, inv, avail, float(g["pmax_mw"]), u, uid, 0.0)  # no offer: nothing idle to hold
             )
@@ -200,24 +204,23 @@ def scenario(
 
 
 @lru_cache(maxsize=None)
+def _real_time(kind: str) -> tuple[tuple[str, ...], np.ndarray]:
+    """The year's real-time series of ``kind`` (load, wind, pv, rtpv, hydro):
+    its column names and an (8760, 12, C) array, MW in each five-minute
+    interval of each hour."""
+    series = _year(rts.timeseries(kind, "real_time"))
+    names = tuple(c for c in series.columns if c not in rts.TIME_COLS)
+    return names, series.select(names).to_numpy().astype(float).reshape(-1, 12, len(names))
+
+
+@lru_cache(maxsize=None)
 def _net_load_error() -> np.ndarray:
-    """(8760, 12) hour-ahead net-load error over the year, MW: the real-time
-    value in each five-minute interval, less the hour's day-ahead forecast,
-    less the mean of that difference over the hour before. Dispatch runs on
-    the day-ahead series; the operator has seen the last hour's miss when it
-    clears, so what is left is what it could not know an hour ahead. Net load
-    is load less wind and solar."""
-
-    def net_load(market: str) -> np.ndarray:
-        total = 0.0
-        for kind, sign in (("load", 1.0), ("wind", -1.0), ("pv", -1.0), ("rtpv", -1.0)):
-            series = _year(rts.timeseries(kind, market))
-            total = total + sign * series.select(pl.sum_horizontal([c for c in series.columns if c not in rts.TIME_COLS])).to_numpy().ravel()
-        return total
-
-    miss = net_load("real_time").reshape(-1, 12) - net_load("day_ahead")[:, None]  # real-time less day-ahead
-    last_hour = np.concatenate([[0.0], miss.mean(axis=1)[:-1]])
-    return miss - last_hour[:, None]
+    """(8760, 12) net-load error over the year, MW: net load in each
+    five-minute interval less its mean over the hour. Dispatch clears on the
+    hour's mean, so this is what it does not see. Net load is load less wind
+    and solar."""
+    net = sum(sign * _real_time(kind)[1].sum(axis=2) for kind, sign in (("load", 1.0), ("wind", -1.0), ("pv", -1.0), ("rtpv", -1.0)))
+    return net - net.mean(axis=1, keepdims=True)
 
 
 def windows(
@@ -228,11 +231,11 @@ def windows(
 ) -> list[Scenario]:
     """The year cut into operating windows of T hours, under one tightness
     scale: the annual tightest hour has the margin and the other windows keep
-    their seasonal slack. At the default 0.027, ERCOT's energy and reserve
-    prices pay the fleet's annual investment cost and PJM's leave about
-    1.1 B$ to its pool (notebooks/tune_reserve_margin.py). The last 24 hours
-    of the year fall outside the 52 windows."""
-    hours = _year(rts.timeseries("load", "day_ahead")).height
+    their seasonal slack. At the default 0.027, ERCOT's prices leave 683 M$
+    of the fleet's investment cost to its pool and PJM's leave 963 M$
+    (notebooks/tune_reserve_margin.py). Week 29 holds the year's tightest
+    hour. The last 24 hours of the year fall outside the 52 windows."""
+    hours = HOURS_PER_YEAR
     return tighten(
         [
             scenario(s, T, alpha, reserve_margin=None, reserve_offer=reserve_offer)
@@ -298,12 +301,12 @@ class ORDC:
     """A reserve construct: the operator's model of the imbalance,
     ε_t = contingency_t + error, and the statistic that prices it.
     The contingency is the larger of the level R̲ (``min_contingency``) and the
-    largest online unit's output and reserve among ``units``, a 0/1 vector over
-    physical units. ERCOT sets the level; a requirement on the largest unit
-    sets the vector."""
+    largest online unit's output and reserve, each unit weighted by ``units``:
+    0 leaves a unit out, 1 covers it, 1.5 covers it one and a half times.
+    ERCOT sets the level; a requirement on the largest unit sets the vector."""
 
     min_contingency: float  # R̲, MW
-    units: np.ndarray  # (U,) 0/1: the units whose trip is the contingency
+    units: np.ndarray  # (U,) the multiple of each unit's output and reserve the requirement covers
     error: Normal | Points
     statistic: Expectation | Maximum
     name: str = ""
@@ -346,9 +349,10 @@ def named_ordcs(scenario: Scenario) -> dict[str, ORDC]:
     and its error is in ε.
     ``ercot``: R̲ at the largest thermal unit's nameplate, a normal error, the
     expectation at VOLL.
-    ``pjm``: the largest online thermal unit, then PJM's second step read as an
-    error (zero, or the extended requirement with probability 300/850), the
-    expectation at the $850 penalty factor.
+    ``pjm``: 1.5 times the largest online thermal unit (PJM's primary reserve,
+    its 10-minute requirement), then PJM's second step read as an error (zero,
+    or the extended requirement with probability 300/850), the expectation at
+    the $850 penalty factor.
     ``n-1``: the largest online thermal unit, no error, the maximum: a hard
     requirement."""
     thermal = (scenario.units @ ~scenario.renewable > 0).astype(float)
@@ -357,7 +361,7 @@ def named_ordcs(scenario: Scenario) -> dict[str, ORDC]:
     extended = Points(np.array([0.0, PJM_EXTENDED * largest]), np.array([1.0 - second, second]))
     return {
         "ercot": ORDC(largest, np.zeros(thermal.size), scenario.error_fit, Expectation(VOLL), "ercot"),
-        "pjm": ORDC(0.0, thermal, extended, Expectation(PJM_PENALTY), "pjm"),
+        "pjm": ORDC(0.0, PJM_PRIMARY * thermal, extended, Expectation(PJM_PENALTY), "pjm"),
         "n-1": ORDC(0.0, thermal, Points(np.zeros(1), np.ones(1)), Maximum(), "n-1"),
     }
 
@@ -416,7 +420,7 @@ class Market:
         so the first step's unfilled part is written max(0, w − z): one row
         per unit, as a requirement on the largest unit is."""
         edges, prices = self.curve()
-        M = scenario.units[self.ordc.units > 0]
+        M = (scenario.units * self.ordc.units[:, None])[self.ordc.units > 0]
         contingency = self.ordc.min_contingency
         if M.shape[0] > 0:
             contingency = cp.maximum(contingency, cp.max(M @ (u + r), axis=0))

@@ -1,9 +1,9 @@
 """flexload: tariff design for price-responsive loads, the memo transcribed.
 
     weeks    = windows(T=168, alpha=0.05, reserve_margin=0.08)   # ω and δ: the year in operating windows
-    market   = Market(named_ordcs(weeks[31])["ercot"])           # the environment: a reserve construct
+    market   = Market(named_ordcs(weeks[29])["ercot"])           # the environment: a reserve construct
     market   = replace(market, C_inv=C_inv(market, weeks))                      # annual cost of the investment layer
-    scenario = weeks[31]
+    scenario = weeks[29]
     tau      = named_tariffs(scenario)["tau_0"]                  # τ, today's tariff
     theta    = named_types(scenario.T, "training")["mover"]            # θ
     b0       = market.clear(scenario, scenario.delta, 0, c_sigma(theta, scenario.delta))   # B0
