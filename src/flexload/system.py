@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -25,6 +25,7 @@ import polars as pl
 import rts_gmlc as rts
 
 HOURS_PER_YEAR = 8760
+VOLL = 5000.0  # c^VOLL, the value of lost load, $/MWh: c^shed, and c^pen where a construct prices at it
 
 # Placeholder annualized capital cost by RTS-GMLC category, $/kW-year (RTS-GMLC
 # has none). Round numbers set 2026-10-25 so the fleet's annual cost, 1,757 M$,
@@ -263,52 +264,98 @@ def margin(scenario: Scenario) -> float:
 # 𝓜_ω
 # ----------------------------------------------------------------------------
 @dataclass(frozen=True)
+class Normal:
+    """An error model: error ~ N(m, v²), in MW."""
+
+    m: float
+    v: float
+
+
+@dataclass(frozen=True)
+class Points:
+    """An error model: the error is ``mw[i]`` with ``probability[i]``. One
+    point at zero is no error."""
+
+    mw: np.ndarray
+    probability: np.ndarray
+
+
+@dataclass(frozen=True)
+class Expectation:
+    """A statistic: the expectation, priced at c^pen. The curve is
+    π(z) = c^pen · Pr[error > z]."""
+
+    c_pen: float
+
+
+@dataclass(frozen=True)
+class Maximum:
+    """A statistic: the maximum. Reserve must cover the largest error; a
+    requirement, priced at c^shed because shedding load is what relieves it."""
+
+
+@dataclass(frozen=True)
 class ORDC:
-    """ERCOT's operating reserve demand curve π as steps: ``widths`` w_s in MW
-    (the last is ∞) and ``prices`` π_s in $/MW-h, decreasing. Reserve above
-    load-following fills the steps in order; the step in use sets μ_t."""
+    """A reserve construct: the operator's model of the imbalance,
+    ε_t = contingency_t + error, and the statistic that prices it.
+    The contingency is the larger of the level R̲ (``min_contingency``) and the
+    largest online unit's output and reserve among ``units``, a 0/1 vector over
+    physical units. ERCOT sets the level; a requirement on the largest unit
+    sets the vector."""
 
-    widths: np.ndarray
-    prices: np.ndarray
+    min_contingency: float  # R̲, MW
+    units: np.ndarray  # (U,) 0/1: the units whose trip is the contingency
+    error: Normal | Points
+    statistic: Expectation | Maximum
+    name: str = ""
 
-    @classmethod
-    def from_lolp(
-        cls, voll: float, min_contingency: float, epsilon_std: float, steps: int = 10
-    ) -> "ORDC":
-        """π(z) = VOLL · Pr[ε > z − R̲] with ε ~ N(0, epsilon_std²), as steps
-        spaced evenly in price. The edges are where the curve crosses the
-        fractions (steps−1)/steps, …, 1/steps of VOLL; each step is priced at
-        the curve's height at its left edge, so the heights are VOLL, then
-        (steps−1)/steps, …, 2/steps of VOLL, then a step of zero price and
-        infinite width. Two approximations, both deferred (CLAUDE.md): the
-        first step is VOLL where the curve is VOLL·Pr[ε > −R̲], and the tail
-        below 1/steps of VOLL is priced at zero. Narrow near R̲, wide in the
-        tail."""
+
+def steps(ordc: ORDC, c_shed: float, n: int = 10) -> tuple[np.ndarray, np.ndarray]:
+    """The curve π as steps. ``edges`` e_1 < … < e_S are MW of reserve above
+    the contingency and ``prices`` are π_1, …, π_S: π_s prices reserve between
+    e_{s−1} and e_s, the first step starts at zero reserve, and reserve above
+    e_S is priced at zero. So the first step's width is contingency_t + e_1 and
+    the others' are w_s = e_s − e_{s−1}.
+    Each step is priced at the curve's height at its left edge. A normal error
+    is cut into ``n`` steps evenly spaced in price, so its tail below 1/n of
+    c^pen is priced at zero."""
+    error, statistic = ordc.error, ordc.statistic
+    if isinstance(error, Normal):
         from scipy.stats import norm
 
-        fractions = np.arange(steps - 1, 0, -1) / steps
-        edges = np.concatenate(
-            [
-                [0.0],
-                np.maximum(
-                    min_contingency + epsilon_std * norm.ppf(1.0 - fractions), 0.0
-                ),
-            ]
-        )
-        prices = voll * np.concatenate(
-            [[1.0], fractions[:-1]]
-        )  # each step's height is the curve at its left edge
-        return cls(
-            np.concatenate([np.diff(edges), [np.inf]]), np.concatenate([prices, [0.0]])
-        )
+        exceed = np.arange(n - 1, 0, -1) / n  # Pr[error > e_s]
+        edges = error.m + error.v * norm.ppf(1.0 - exceed)
+    else:
+        order = np.argsort(error.mw)
+        edges = np.asarray(error.mw, float)[order]
+        exceed = np.maximum(1.0 - np.cumsum(np.asarray(error.probability, float)[order]), 0.0)
+    edges = np.maximum(edges, -ordc.min_contingency)  # the curve starts at zero reserve
+    if isinstance(statistic, Maximum):
+        if isinstance(error, Normal):
+            raise ValueError("the maximum of a normal error is unbounded")
+        return edges[-1:], np.array([c_shed])
+    return edges, statistic.c_pen * np.concatenate([[1.0], exceed[:-1]])
+
+
+def named_ordcs(scenario: Scenario) -> dict[str, ORDC]:
+    """The constructs, on the scenario's fleet and forecast error.
+    ``ercot``: R̲ at the largest thermal unit's nameplate (a wind farm's
+    nameplate is not what can trip), a normal error, the expectation at VOLL.
+    ``pjm``: the largest online unit, no error, the maximum."""
+    U = scenario.units.shape[0]
+    largest = float((scenario.units @ (scenario.nameplate * ~scenario.renewable)).max())
+    return {
+        "ercot": ORDC(largest, np.zeros(U), Normal(0.0, scenario.epsilon_std), Expectation(VOLL), "ercot"),
+        "pjm": ORDC(0.0, np.ones(U), Points(np.zeros(1), np.ones(1)), Maximum(), "pjm"),
+    }
 
 
 @dataclass(frozen=True)
 class Dispatch:
     """What 𝓜_ω(d, σ) determined: the load's consumption d (the report's dᶜᵘʳᵗ)
-    and cleared reserve σ (σᶜˡʳ), generation, prices (λ, μ, ν), the reserve
-    value Π_t, and the cost of each layer Cᵏ. The bid it answered is kept as
-    ``d_bid``, ``sigma_bid``. Shapes (T,) unless noted."""
+    and cleared reserve σ (σᶜˡʳ), generation, prices (λ, μ, ν), the ORDC's
+    cost C^ORDC_t, and the cost of each layer Cᵏ. The bid it answered is kept
+    as ``d_bid``, ``sigma_bid``. Shapes (T,) unless noted."""
 
     d: np.ndarray  # consumption served
     sigma: np.ndarray  # reserve cleared from the load's offer
@@ -319,7 +366,7 @@ class Dispatch:
     mu: np.ndarray  # reserve price μ
     nu: np.ndarray  # (J, T) capacity rent ν
     eta: np.ndarray  # value of one more MW of the load's offer, η
-    Pi: np.ndarray  # value of reserve held, ∫π (ERCOT); zero under PJM
+    C_ordc: np.ndarray  # the ORDC's cost C^ORDC_t = Σ_s π_s (w_st − z_st): expected imbalance reserve does not cover
     C_energy: np.ndarray  # cost of the energy layer, λ_t d_sys_t
     C_res: np.ndarray  # cost of the reserve layer, μ_t (Σ_j r_jt + σ_t)
     C_inv: float  # cost of the investment layer for the window: annual Cⁱⁿᵛ × T/8760
@@ -334,46 +381,53 @@ class Dispatch:
 
 @dataclass(frozen=True)
 class Market:
-    """The environment: ``reserve`` is ``"pjm"`` (hard requirement: if unit j'
-    trips, everyone else's reserve covers its output plus γ d_sys) or
-    ``"ercot"`` (R_t ≥ γ d_sys, and reserve above that valued on the demand
-    curve Π_t). ``C_inv`` is the annual cost of the investment layer from
-    :func:`C_inv`; the short run needs it. Never the operator's choice."""
+    """The environment: the reserve construct ``ordc``, the price c^shed on
+    load shed, and the load-following share γ that reserve must cover before
+    the curve values it. ``C_inv`` is the annual cost of the investment layer
+    from :func:`C_inv`; the short run needs it. Never the operator's choice."""
 
-    reserve: str = "ercot"
+    ordc: ORDC
     gamma: float = 0.03
-    voll: float = 5000.0
+    c_shed: float = VOLL
     long_run: bool = False
-    ordc: ORDC | None = None  # ercot; None -> fit from the window's forecast error
     C_inv: float | None = None
     solver: str = "GUROBI"
     solver_options: dict = field(default_factory=dict)
 
-    def ordc_for(self, scenario: Scenario) -> ORDC:
-        """The curve: ``ordc`` if given, else fit with R̲ at the largest thermal
-        unit's nameplate (the contingency PJM's row protects against; a wind
-        farm's nameplate is not what can trip) and the window's ε."""
-        if self.ordc is not None:
-            return self.ordc
-        return ORDC.from_lolp(
-            self.voll,
-            float((scenario.units @ (scenario.nameplate * ~scenario.renewable)).max()),
-            scenario.epsilon_std,
-        )
+    def curve(self) -> tuple[np.ndarray, np.ndarray]:
+        """The ORDC as steps, (edges, prices); see :func:`steps`."""
+        return steps(self.ordc, self.c_shed)
 
     # --- the objective and constraints, written once; used by clear, planner, S --
-    def C_sys(self, scenario: Scenario, u, r, sigma, c_sigma, shed, y, Pi):
-        """System cost: Σ_t [Σ_j (cᵘ u + cʳ r) + c^σ σ + cⱽᴼᴸᴸ s − Π_t] plus Σ_j cⁱⁿᵛ y
-        in the long run. The dispatch objective is this plus the load's own
-        curtailment at VOLL, which stands in for its value."""
+    def C_ordc(self, scenario: Scenario, u, r, z):
+        """C^ORDC_t = Σ_s π_s (w_st − z_st), the expected cost of the imbalance
+        that reserve does not cover; z_st is how much of step s reserve fills.
+        The first step's width is the contingency plus e_1. Where the
+        contingency is the largest online unit that width moves with dispatch,
+        so the first step's unfilled part is written max(0, w − z): one row
+        per unit, as a requirement on the largest unit is."""
+        edges, prices = self.curve()
+        M = scenario.units[self.ordc.units > 0]
+        contingency = self.ordc.min_contingency
+        if M.shape[0] > 0:
+            contingency = cp.maximum(contingency, cp.max(M @ (u + r), axis=0))
+        cost = prices[0] * cp.pos(contingency + edges[0] - z[0])
+        if edges.size > 1:
+            cost = cost + prices[1:] @ (np.diff(edges)[:, None] - z[1:])
+        return cost
+
+    def C_sys(self, scenario: Scenario, u, r, sigma, c_sigma, shed, y, C_ordc):
+        """System cost: Σ_t [Σ_j (cᵘ u + cʳ r) + c^σ σ + c^shed s + C^ORDC_t] plus
+        Σ_j cⁱⁿᵛ y in the long run. The dispatch objective is this plus the
+        load's own curtailment at c^shed, which stands in for its value."""
         cost = cp.sum(cp.multiply(scenario.cost_gen[:, None], u)) + cp.sum(
             cp.multiply(scenario.cost_res[:, None], r)
         )
         cost = (
             cost
             + cp.sum(cp.multiply(c_sigma, sigma))
-            + self.voll * cp.sum(shed)
-            - cp.sum(Pi)
+            + self.c_shed * cp.sum(shed)
+            + cp.sum(C_ordc)
         )
         if self.long_run:
             cost = cost + (scenario.cost_inv * scenario.T / HOURS_PER_YEAR) @ y
@@ -383,7 +437,8 @@ class Market:
         self, scenario: Scenario, sigma_bid, d_firm, u, r, sigma, d, y, z, shed
     ) -> dict:
         """Balance (λ), capacity (ν), reserve (μ), offer (η), as named cvxpy
-        constraints. Reserve held is R_t = Σ_j r_jt + σ_t + (d_t − dᶠⁱʳᵐ_t)."""
+        constraints. Reserve held is R_t = Σ_j r_jt + σ_t + (d_t − dᶠⁱʳᵐ_t);
+        what is left of it above γ d_sys fills the ORDC's steps, Σ_s z_st."""
         T, J = scenario.T, scenario.J
         d_sys = d + scenario.d_other
         cons = {"balance": cp.sum(u, axis=0) + shed == d_sys}
@@ -396,26 +451,12 @@ class Market:
             cons["capacity"] = u + r <= scenario.capacity
         if scenario.renewable.any():  # wind, solar and hydro offer no reserve
             cons["renewable_reserve"] = r[np.flatnonzero(scenario.renewable), :] == 0
-        X = cp.Variable(
-            T
-        )  # reserve above load-following, its own variable so the per-unit rows stay sparse
-        cons["net_reserve"] = (
-            X == cp.sum(r, axis=0) + sigma + (d - d_firm) - self.gamma * d_sys
+        cons["reserve"] = (  # dual: the height of the step in use, μ_t
+            cp.sum(z, axis=0) == cp.sum(r, axis=0) + sigma + (d - d_firm) - self.gamma * d_sys
         )
-        M = scenario.units
-        if self.reserve == "pjm":
-            cons["reserve"] = (
-                np.ones((M.shape[0], 1)) @ cp.reshape(X, (1, T), order="C")
-                >= M @ u + M @ r
-            )
-        else:
-            widths = self.ordc_for(scenario).widths
-            cons["reserve"] = (
-                cp.sum(z, axis=0) == X
-            )  # dual: the height of the step in use, μ_t
-            cons["steps"] = (
-                z[np.isfinite(widths), :] <= widths[np.isfinite(widths), None]
-            )
+        edges = self.curve()[0]
+        if edges.size > 1:  # the first step's width is in C_ordc
+            cons["steps"] = z[1:] <= np.diff(edges)[:, None]
         if isinstance(sigma, cp.Variable):
             cons["offer"] = sigma <= sigma_bid
         return cons
@@ -449,16 +490,13 @@ class Market:
         sigma = cp.Variable(T, nonneg=True) if offers else np.zeros(T)
         d = cp.Variable(T) if curtailable else d_bid
         y = cp.Variable(J, nonneg=True) if self.long_run else scenario.nameplate
-        if self.reserve == "ercot":
-            z = cp.Variable((self.ordc_for(scenario).widths.size, T), nonneg=True)
-            Pi = self.ordc_for(scenario).prices @ z
-        else:
-            z, Pi = None, np.zeros(T)
+        z = cp.Variable((self.curve()[1].size, T), nonneg=True)
+        C_ordc = self.C_ordc(scenario, u, r, z)
 
-        cost = self.C_sys(scenario, u, r, sigma, c_sigma, shed, y, Pi)
+        cost = self.C_sys(scenario, u, r, sigma, c_sigma, shed, y, C_ordc)
         cons = self.constraints(scenario, sigma_bid, d_firm, u, r, sigma, d, y, z, shed)
         if curtailable:
-            cost = cost + self.voll * cp.sum(d_bid - d)
+            cost = cost + self.c_shed * cp.sum(d_bid - d)
             cons["curtail"] = d >= d_firm
             cons["serve"] = d <= d_bid
         problem = cp.Problem(cp.Minimize(cost), list(cons.values()))
@@ -467,13 +505,9 @@ class Market:
             raise RuntimeError(f"clearing failed: {problem.status}")
 
         # cvxpy reports an equality dual as −∂cost/∂rhs. Balance has load on the right, so λ = −dual.
-        # The demand-curve row has reserve on the right and more reserve lowers cost, so μ = +dual.
+        # The reserve row has reserve on the right and more reserve lowers cost, so μ = +dual.
         lam = -_dual(cons["balance"])
-        mu = (
-            np.asarray(cons["reserve"].dual_value).sum(axis=0)
-            if self.reserve == "pjm"
-            else _dual(cons["reserve"])
-        )
+        mu = _dual(cons["reserve"])
         d, sigma, r_ = _value(d), _value(sigma), _value(r)
         if self.C_inv is None and not self.long_run:
             raise ValueError(
@@ -489,7 +523,7 @@ class Market:
             mu=np.asarray(mu),
             nu=np.asarray(cons["capacity"].dual_value),
             eta=_dual(cons["offer"]) if "offer" in cons else np.zeros(T),
-            Pi=_value(Pi),
+            C_ordc=_value(C_ordc),
             C_energy=lam * (d + scenario.d_other),
             C_res=mu * (r_.sum(axis=0) + sigma),
             C_inv=0.0 if self.long_run else float(self.C_inv) * T / HOURS_PER_YEAR,
@@ -527,9 +561,9 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
     keeps the signed value."""
     key = None
     if cache:
-        h = hashlib.sha1(repr((market.reserve, market.gamma, market.voll, "rent as profit, 8760 h")).encode())
-        if market.ordc is not None:
-            h.update(market.ordc.widths.tobytes() + market.ordc.prices.tobytes())
+        h = hashlib.sha1(repr((market.ordc.min_contingency, market.gamma, market.c_shed, "rent as profit, 8760 h")).encode())
+        for a in (*market.curve(), market.ordc.units):
+            h.update(np.ascontiguousarray(a, dtype=float).tobytes())
         for s in windows:
             for a in (
                 s.d_sys,
@@ -543,16 +577,7 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
         key = Path.home() / ".cache" / "flexload" / "C_inv" / f"{h.hexdigest()}.json"
         if key.exists():
             return max(float(json.loads(key.read_text())["annual"]), 0.0)
-    m = Market(
-        market.reserve,
-        market.gamma,
-        market.voll,
-        False,
-        market.ordc,
-        0.0,
-        market.solver,
-        market.solver_options,
-    )
+    m = replace(market, long_run=False, C_inv=0.0)
     by_window = []  # the fleet's rent in each window
     for s in windows:
         b0 = m.clear(s, s.delta, np.zeros(s.T), np.zeros(s.T))

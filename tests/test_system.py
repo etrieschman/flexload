@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from flexload.system import HOURS_PER_YEAR, C_inv, Market, ORDC, margin, tighten
+from flexload.system import HOURS_PER_YEAR, C_inv, Expectation, Market, ORDC, Points, margin, named_ordcs, steps, tighten
 
 
 def b0(market, small, d_firm=None):
@@ -36,17 +36,20 @@ def test_pjm_reserve_covers_largest_unit(pjm, small):
 
 
 def test_ercot_demand_curve_price_reads_off_curve(small):
-    curve = ORDC(widths=np.array([10.0, 10.0, np.inf]), prices=np.array([100.0, 40.0, 0.0]))
-    market = Market(reserve="ercot", gamma=0.0, ordc=curve, C_inv=0.0)
+    # a 10 MW contingency at 100, then 10 MW more at 0.4 × 100 = 40
+    curve = ORDC(10.0, np.zeros(3), Points(np.array([0.0, 10.0]), np.array([0.6, 0.4])), Expectation(100.0))
+    edges, prices = steps(curve, 5000.0)
+    assert np.allclose(edges, [0.0, 10.0]) and np.allclose(prices, [100.0, 40.0])
+    market = Market(curve, gamma=0.0, C_inv=0.0)
     dp = b0(market, small)
     # reserve is free (no reserve cost, slack capacity): the LP fills the curve until the price is zero
     assert np.allclose(dp.mu, 0.0, atol=1e-6)
-    assert np.isclose(dp.Pi.sum(), small.T * (1000.0 + 400.0), rtol=1e-6)
+    assert np.allclose(dp.C_ordc, 0.0, atol=1e-6)
 
 
 def test_C_sys_is_generation_cost_when_reserve_free(pjm, small):
     dp = b0(pjm, small)
-    assert np.isclose(float(pjm.C_sys(small, dp.u, dp.r, dp.sigma, dp.c_sigma, dp.shed, dp.y, dp.Pi).value), float((small.cost_gen[:, None] * dp.u).sum()), rtol=1e-6)
+    assert np.isclose(float(pjm.C_sys(small, dp.u, dp.r, dp.sigma, dp.c_sigma, dp.shed, dp.y, dp.C_ordc).value), float((small.cost_gen[:, None] * dp.u).sum()), rtol=1e-6)
 
 
 def test_pools_on_the_dispatch(market, small):
@@ -57,11 +60,11 @@ def test_pools_on_the_dispatch(market, small):
 
 def test_short_run_needs_C_inv(small):
     with pytest.raises(ValueError):
-        b0(Market(reserve="pjm", gamma=0.0), small)
+        b0(Market(named_ordcs(small)["pjm"], gamma=0.0), small)
 
 
 def test_long_run_builds_capacity(small):
-    market = Market(reserve="pjm", gamma=0.0, long_run=True)
+    market = Market(named_ordcs(small)["pjm"], gamma=0.0, long_run=True)
     dp = b0(market, small)
     assert np.all(dp.y >= -1e-6)
     assert dp.y.sum() >= small.d_sys.max() - 1e-3
@@ -88,7 +91,7 @@ def test_other_load_sheds_at_voll_when_short(pjm, small):
     dp = b0(pjm, tight)
     assert dp.shed[2] > 0.0 and np.allclose(dp.shed[[0, 1, 3]], 0.0, atol=1e-6)
     assert np.isclose(dp.lam[2], 5000.0, rtol=1e-6)
-    assert np.isclose(float(pjm.C_sys(tight, dp.u, dp.r, dp.sigma, dp.c_sigma, dp.shed, dp.y, dp.Pi).value), float((tight.cost_gen[:, None] * dp.u).sum()) + 5000.0 * dp.shed.sum(), rtol=1e-6)
+    assert np.isclose(float(pjm.C_sys(tight, dp.u, dp.r, dp.sigma, dp.c_sigma, dp.shed, dp.y, dp.C_ordc).value), float((tight.cost_gen[:, None] * dp.u).sum()) + 5000.0 * dp.shed.sum(), rtol=1e-6)
 
 
 def test_C_inv_is_annual_cost_less_rents(pjm, small):
@@ -113,7 +116,7 @@ def test_rent_is_on_available_capacity_not_nameplate(pjm, small):
         names=(*small.names, "wind"),
     )
     assert windy.renewable.tolist() == [False, False, False, True]
-    dp = b0(pjm, windy)
+    dp = b0(replace(pjm, ordc=named_ordcs(windy)["pjm"]), windy)  # the construct's units are the fleet's
     assert np.allclose(dp.r[3], 0.0, atol=1e-6)
     wind_rent = float(np.sum(dp.lam * dp.u[3]))
     assert np.isclose(float(np.sum(dp.nu[3] * windy.capacity[3])), wind_rent, rtol=1e-6)
@@ -133,9 +136,7 @@ def test_ordc_contingency_is_the_largest_thermal_unit(small):
         unit=np.append(small.unit, 3),
         names=(*small.names, "wind"),
     )
-    curve = Market(reserve="ercot", C_inv=0.0).ordc_for(windy)
-    edges = np.cumsum(curve.widths[:-1])
-    assert edges.max() < 100.0 + 5 * windy.epsilon_std  # centred on the 100 MW unit, not the 900 MW wind farm
+    assert named_ordcs(windy)["ercot"].min_contingency == 100.0  # the 100 MW unit, not the 900 MW wind farm
 
 
 def test_tighten_sets_the_annual_tightest_hour(small):

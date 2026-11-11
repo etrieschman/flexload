@@ -150,12 +150,12 @@ def feasible(theta: LoadType, delta: np.ndarray, d_bid, sigma_bid) -> list:
     return cons
 
 
-def S(theta: LoadType, market: Market, scenario: Scenario, d, sigma, u, r, shed, y, Pi):
+def S(theta: LoadType, market: Market, scenario: Scenario, d, sigma, u, r, shed, y, C_ordc):
     """S = V(d, σ) − C_sys + c^σᵀσ, welfare on what the load consumed and what
     cleared. The offer cost sits in V and in C_sys, so it is added back once.
     On numbers or variables alike; read a number with ``.value``."""
     offer = c_sigma(theta, scenario.delta)
-    C_sys = market.C_sys(scenario, u, r, sigma, offer, shed, y, Pi)
+    C_sys = market.C_sys(scenario, u, r, sigma, offer, shed, y, C_ordc)
     return V(theta, scenario.delta, d, sigma) - C_sys + offer @ sigma
 
 
@@ -306,17 +306,14 @@ def planner(
     )
     y = cp.Variable(J, nonneg=True) if market.long_run else scenario.nameplate
     d_firm = theta.d_firm(delta) if theta.curtailable else d_bid
-    if market.reserve == "ercot":
-        z = cp.Variable((market.ordc_for(scenario).widths.size, T), nonneg=True)
-        Pi = market.ordc_for(scenario).prices @ z
-    else:
-        z, Pi = None, np.zeros(T)
+    z = cp.Variable((market.curve()[1].size, T), nonneg=True)
+    C_ordc = market.C_ordc(scenario, u, r, z)
     cons = feasible(theta, delta, d_bid, sigma_bid) + list(
         market.constraints(
             scenario, sigma_bid, d_firm, u, r, sigma, d_bid, y, z, shed
         ).values()
     )
-    welfare = S(theta, market, scenario, d_bid, sigma, u, r, shed, y, Pi)
+    welfare = S(theta, market, scenario, d_bid, sigma, u, r, shed, y, C_ordc)
     problem = cp.Problem(cp.Maximize(welfare), cons)
     problem.solve(solver=solver)
     if problem.status not in ("optimal", "optimal_inaccurate"):

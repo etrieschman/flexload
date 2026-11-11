@@ -178,7 +178,7 @@ def summary(
         align[f"alignment_p99_{k}"] = float(np.percentile(hours, 99)) if hours.size else None
     S_B0, S_R, S_B1 = (
         float(
-            S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.Pi).value
+            S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.C_ordc).value
         )
         for x in (b0, dispatch, planned)
     )
@@ -186,7 +186,7 @@ def summary(
     return {
         "tariff": tariff.name,
         "type": theta.name,
-        "market": market.reserve,
+        "market": market.ordc.name,
         "belief": belief,
         "start": scenario.start,
         "S_B0": S_B0,

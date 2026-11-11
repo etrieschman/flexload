@@ -67,7 +67,7 @@ for margin in MARGINS:
     hours = sum(w.T for w in weeks)
     for m in MARKETS:
         t0 = time.time()
-        mk = fl.Market(reserve=m, C_inv=0.0)  # the pool is what this notebook computes
+        mk = fl.Market(fl.named_ordcs(weeks[0])[m], C_inv=0.0)  # the pool is what this notebook computes
         rent = shed = 0.0
         scarce = {"year": 0, "week": 0}
         for i, w in enumerate(weeks):

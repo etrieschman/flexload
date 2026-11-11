@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from flexload.system import Market, Scenario
+from flexload.system import Market, Scenario, named_ordcs
 
 C_INV = 520_000.0  # annual cost of the investment layer, $, arbitrary
 
@@ -30,10 +30,10 @@ def small() -> Scenario:
 
 
 @pytest.fixture(params=["pjm", "ercot"])
-def market(request) -> Market:
-    return Market(reserve=request.param, gamma=0.0, voll=5000.0, C_inv=C_INV)
+def market(request, small) -> Market:
+    return Market(named_ordcs(small)[request.param], gamma=0.0, C_inv=C_INV)
 
 
 @pytest.fixture
-def pjm() -> Market:
-    return Market(reserve="pjm", gamma=0.0, voll=5000.0, C_inv=C_INV)
+def pjm(small) -> Market:
+    return Market(named_ordcs(small)["pjm"], gamma=0.0, C_inv=C_INV)

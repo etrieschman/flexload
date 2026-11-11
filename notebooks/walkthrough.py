@@ -39,6 +39,7 @@ T = 168  # hours per operating window: one week
 WEEK = 32  # the window shown: mid August, the week with the year's tightest hour
 ALPHA = 0.05  # the load's size, its share of system load
 RESERVE_MARGIN = 0.08  # spare capacity at the year's tightest hour (the default)
+RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
 RESERVE = "ercot"  # "ercot" (demand curve) or "pjm" (hard requirement)
 BUSINESS = "data_center_train"  # or "data_center_infer", "bitcoin_mine": sets (psi, beta, A) of the swept types
 TYPE = "mover"  # inflexible, mover, controllable, emergency, curtailable
@@ -56,14 +57,14 @@ print("\n1. Fix the market and window; set the tariff")
 t0 = time.time()
 weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN, reserve_offer=RESERVE_OFFER)
 scenario = weeks[WEEK]
-market = fl.Market(reserve=RESERVE)
+market = fl.Market(fl.named_ordcs(scenario)[RESERVE])
 market = replace(market, C_inv=fl.C_inv(market, weeks))
 tau = fl.named_tariffs(scenario)["tau_0"]
 theta = fl.named_types(T, BUSINESS)[TYPE]
 offer = fl.c_sigma(theta, scenario.delta)
 d_firm = theta.d_firm(scenario.delta)
-ordc = market.ordc_for(scenario)
-steps = list(zip(ordc.widths.round().tolist(), ordc.prices.round().tolist()))
+edges, prices = market.curve()  # the ORDC as steps: MW of reserve above the contingency, and the price below each edge
+steps = list(zip(edges.round().tolist(), prices.round().tolist()))
 print(f"setup time [s]:\t{time.time() - t0:.0f}")
 print(f"hours in the window T:\t{scenario.T}")
 print(f"generator offer blocks J:\t{scenario.J}")
@@ -76,7 +77,7 @@ print(f"ex-ante peak hour t* [hour of window]:\t{scenario.peak}")
 print(f"annual investment-layer cost C_inv [M$]:\t{market.C_inv / 1e6:,.1f}")
 print(f"this window's share of C_inv [M$]:\t{market.C_inv * T / 8760 / 1e6:,.2f}")
 print(f"forecast error std sigma_eps [MW]:\t{scenario.epsilon_std:,.0f}")
-print(f"ORDC first steps (width [MW], price [$/MWh]):\t{steps[:4]} ...")
+print(f"ORDC first steps (edge above the contingency [MW], price below it [$/MWh]):\t{steps[:4]} ...")
 
 # %%
 # Step 2. The load's belief for the exogenous price-taker: clear the market at
@@ -160,7 +161,7 @@ S_R = float(
         dispatch.r,
         dispatch.shed,
         dispatch.y,
-        dispatch.Pi,
+        dispatch.C_ordc,
     ).value
 )
 S_R_c = float(
@@ -174,7 +175,7 @@ S_R_c = float(
         dispatch_c.r,
         dispatch_c.shed,
         dispatch_c.y,
-        dispatch_c.Pi,
+        dispatch_c.C_ordc,
     ).value
 )
 print(f"welfare at R, exogenous belief [$]:\t{S_R:,.0f}")

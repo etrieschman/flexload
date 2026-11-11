@@ -6,7 +6,7 @@ import numpy as np
 
 from flexload.load import Belief, LoadType, S, best_response, c_sigma, fixed_point, named_types, planner
 from flexload.metrics import recovery, respond, summary, table
-from flexload.system import Dispatch, Market
+from flexload.system import Dispatch, Market, named_ordcs
 from flexload.tariff import Marginal, Share, Tariff, named_tariffs, peak_hour
 
 
@@ -14,13 +14,13 @@ def posted(lam, mu, delta) -> Dispatch:
     """A dispatch with posted prices and empty pools, so the bill is λᵀd − μᵀσ."""
     T = lam.shape[0]
     z = np.zeros(T)
-    return Dispatch(d=delta, sigma=z, u=np.zeros((1, T)), r=np.zeros((1, T)), shed=z, lam=lam, mu=mu, nu=np.zeros((1, T)), eta=z, Pi=z,
+    return Dispatch(d=delta, sigma=z, u=np.zeros((1, T)), r=np.zeros((1, T)), shed=z, lam=lam, mu=mu, nu=np.zeros((1, T)), eta=z, C_ordc=z,
                     C_energy=z, C_res=z, C_inv=0.0, d_bid=delta, sigma_bid=z, d_firm=delta, c_sigma=z, y=np.ones(1), curtailable=False)
 
 
 def welfare(theta, market, scenario, x) -> float:
     """S read off a dispatch."""
-    return float(S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.Pi).value)
+    return float(S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.C_ordc).value)
 
 
 def energy_only(T) -> Tariff:
@@ -121,7 +121,7 @@ def test_summary_row(pjm, small):
 
 
 def test_table_and_choice(small):
-    market = Market(reserve="ercot", gamma=0.0, C_inv=520_000.0)
+    market = Market(named_ordcs(small)["ercot"], gamma=0.0, C_inv=520_000.0)
     tariffs = named_tariffs(small)
     types = {k: v for k, v in named_types(small.T).items() if k in ("mover", "controllable")}
     t = table(types, tariffs, [market], [small])

@@ -96,7 +96,7 @@ print("\nEnvironment")
 t0 = time.time()
 weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN, reserve_offer=RESERVE_OFFER)
 scenario = weeks[WEEK]
-markets = {m: fl.Market(reserve=m) for m in MARKETS}
+markets = {m: fl.Market(fl.named_ordcs(scenario)[m]) for m in MARKETS}
 markets = {m: replace(mk, C_inv=fl.C_inv(mk, weeks)) for m, mk in markets.items()}
 tau = fl.named_tariffs(scenario)["tau_0"]
 types = {b: fl.named_types(T, b) for b in BUSINESSES}
@@ -218,9 +218,9 @@ for m, mk in markets.items():
 print(f"time [s]:\t{time.time() - t0:.0f}")
 
 capacity = scenario.capacity.sum(axis=0)
-ordc = markets["ercot"].ordc_for(scenario)
+edges, prices = markets["ercot"].curve()  # MW above the contingency, and the price below each edge
 reserve_priced = {  # the reserve the market pays for; load above capacity less this and it prices scarcity
-    "ercot": markets["ercot"].gamma * scenario.d_sys + ordc.widths[ordc.prices > 0].sum(),
+    "ercot": markets["ercot"].gamma * scenario.d_sys + markets["ercot"].ordc.min_contingency + edges[prices > 0].max(),
     "pjm": float((scenario.units @ (scenario.nameplate * ~scenario.renewable)).max()) + markets["pjm"].gamma * scenario.d_sys,
 }
 plt.rcParams.update({"font.size": 16, "axes.labelsize": 17, "axes.titlesize": 18, "legend.fontsize": 15})

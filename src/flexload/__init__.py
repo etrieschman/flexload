@@ -1,7 +1,7 @@
 """flexload: tariff design for price-responsive loads, the memo transcribed.
 
     weeks    = windows(T=168, alpha=0.05, reserve_margin=0.08)   # ω and δ: the year in operating windows
-    market   = Market(reserve="ercot")                           # the environment
+    market   = Market(named_ordcs(weeks[31])["ercot"])           # the environment: a reserve construct
     market   = replace(market, C_inv=C_inv(market, weeks))                      # annual cost of the investment layer
     scenario = weeks[31]
     tau      = named_tariffs(scenario)["tau_0"]                  # τ, today's tariff
@@ -15,12 +15,12 @@
 
 from .load import BETA, BUSINESS, P, PSI, Belief, LoadType, S, V, best_response, c_sigma, feasible, fixed_point, named_types, payoff, planner
 from .metrics import alignment, fairness, recovery, respond, settle, summary, table, tex
-from .system import C_inv, Dispatch, ORDC, Market, Scenario, margin, scenario, tighten, windows
+from .system import VOLL, C_inv, Dispatch, Expectation, Market, Maximum, Normal, ORDC, Points, Scenario, margin, named_ordcs, scenario, steps, tighten, windows
 from .tariff import LAYERS, Marginal, Share, Tariff, TwoPart, named_tariffs, peak_hour
 
 __all__ = [
-    "BETA", "BUSINESS", "Belief", "C_inv", "Dispatch", "LAYERS", "LoadType", "Marginal", "Market", "ORDC", "P", "PSI", "S", "Scenario", "Share", "Tariff",
-    "TwoPart", "V", "alignment", "best_response", "c_sigma", "fairness", "feasible",
-    "fixed_point", "margin", "named_tariffs", "named_types", "payoff", "peak_hour", "planner",
-    "recovery", "respond", "scenario", "settle", "summary", "table", "tex", "tighten", "windows",
+    "BETA", "BUSINESS", "Belief", "C_inv", "Dispatch", "Expectation", "LAYERS", "LoadType", "Marginal", "Market", "Maximum", "Normal", "ORDC", "P", "PSI", "Points", "S", "Scenario", "Share", "Tariff",
+    "TwoPart", "V", "VOLL", "alignment", "best_response", "c_sigma", "fairness", "feasible",
+    "fixed_point", "margin", "named_ordcs", "named_tariffs", "named_types", "payoff", "peak_hour", "planner",
+    "recovery", "respond", "scenario", "settle", "steps", "summary", "table", "tex", "tighten", "windows",
 ]
