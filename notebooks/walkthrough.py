@@ -76,7 +76,7 @@ print(f"this window's tightest-hour margin [fraction]:\t{fl.margin(scenario):.3f
 print(f"ex-ante peak hour t* [hour of window]:\t{scenario.peak}")
 print(f"annual investment-layer cost C_inv [M$]:\t{market.C_inv / 1e6:,.1f}")
 print(f"this window's share of C_inv [M$]:\t{market.C_inv * T / 8760 / 1e6:,.2f}")
-print(f"forecast error std sigma_eps [MW]:\t{scenario.epsilon_std:,.0f}")
+print(f"hour-ahead net-load error, normal fit (m, v) [MW]:\t{scenario.error_fit.m:,.0f}, {scenario.error_fit.v:,.0f}")
 print(f"ORDC first steps (edge above the contingency [MW], price below it [$/MWh]):\t{steps[:4]} ...")
 
 # %%

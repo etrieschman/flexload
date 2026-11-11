@@ -49,7 +49,7 @@ T = 168
 WEEK = 32  # the window with the year's tightest hour
 ALPHA = 0.05
 RESERVE_OFFER = 0.1
-MARGINS = (0.20, 0.15, 0.12, 0.10, 0.08)
+MARGINS = (0.10, 0.08, 0.06, 0.05, 0.04, 0.03)
 MARKETS = ("ercot", "pjm", "n-1")
 M = 1e6  # dollars per M$
 here = Path(__file__).parent if "__file__" in globals() else Path(".")
@@ -70,6 +70,7 @@ for margin in MARGINS:
         mk = fl.Market(fl.named_ordcs(weeks[0])[m], C_inv=0.0)  # the pool is what this notebook computes
         rent = shed = 0.0
         scarce = {"year": 0, "week": 0}
+        above = {100: 0, 1000: 0}  # hours with the reserve price above $100 and $1,000
         for i, w in enumerate(weeks):
             b0 = mk.clear(w, w.delta, np.zeros(T), np.zeros(T))
             rent += fleet_rent(w, b0)  # the fleet's profit: revenue above fuel and reserve offers
@@ -77,6 +78,8 @@ for margin in MARGINS:
             hot = int((b0.mu > w.cost_res.max() + 1e-6).sum())  # the reserve price is above every reserve offer
             scarce["year"] += hot
             scarce["week"] += hot if i == WEEK else 0
+            for level in above:
+                above[level] += int((b0.mu > level).sum())
         rows.append(
             {
                 "margin": margin,
@@ -86,6 +89,8 @@ for margin in MARGINS:
                 "pool [M$]": max(fleet - rent * 8760 / hours, 0.0) / M,
                 "scarcity hours": scarce["year"],
                 f"scarcity hours, week {WEEK}": scarce["week"],
+                "hours mu > 100": above[100],
+                "hours mu > 1000": above[1000],
                 "shed [MWh]": shed,
             }
         )

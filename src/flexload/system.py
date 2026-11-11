@@ -57,6 +57,21 @@ RENEWABLE = ("pv", "rtpv", "wind", "hydro")  # availability from the time series
 # ω and δ
 # ----------------------------------------------------------------------------
 @dataclass(frozen=True)
+class Normal:
+    """An error model: error ~ N(m, v²), in MW."""
+
+    m: float
+    v: float
+
+
+def fit(error: np.ndarray) -> Normal:
+    """The normal fit to a sample of errors, as ERCOT fits its curve: their
+    mean and standard deviation. An operator that learns calls this on the
+    imbalance it has seen."""
+    return Normal(float(np.mean(error)), float(np.std(error)))
+
+
+@dataclass(frozen=True)
 class Scenario:
     """One operating window. Shapes: T hours, J generator columns."""
 
@@ -70,9 +85,9 @@ class Scenario:
     unit: np.ndarray  # (J,) int, physical unit of each column
     names: tuple[str, ...] = ()
     start: int = 0  # first hour of the window in the year
-    epsilon_std: float = 0.0  # σ of the normal fit to the hourly net-load forecast error ε, MW; one value for the year
+    error_fit: Normal | None = None  # (m, v) of the normal fit to the year's net-load error, MW
     trip: np.ndarray | None = None  # (J,) hourly probability that the column's unit trips, 1/MTTF; zero for renewables
-    error: np.ndarray | None = None  # (T, 12) net-load error in each five-minute interval, real-time less day-ahead, MW
+    error: np.ndarray | None = None  # (T, 12) the window's net-load error in each five-minute interval, hour-ahead, MW
 
     @property
     def T(self) -> int:
@@ -178,7 +193,7 @@ def scenario(
         unit=np.array([c[5] for c in cols]),
         names=tuple(c[6] for c in cols),
         start=start,
-        epsilon_std=float(np.std(_net_load_error().mean(axis=1))),
+        error_fit=fit(_net_load_error()),
         trip=np.array([c[7] for c in cols]),
         error=_net_load_error()[lo:hi],
     )
@@ -187,29 +202,23 @@ def scenario(
 
 @lru_cache(maxsize=None)
 def _net_load_error() -> np.ndarray:
-    """(8760, 12) net-load forecast error over the year, MW: the real-time
-    value in each five-minute interval less the hour's day-ahead forecast. Net
-    load is load less wind and solar. ``Scenario.epsilon_std`` is the standard
-    deviation of its hourly mean, the σ of the normal fit."""
+    """(8760, 12) hour-ahead net-load error over the year, MW: the real-time
+    value in each five-minute interval, less the hour's day-ahead forecast,
+    less the mean of that difference over the hour before. Dispatch runs on
+    the day-ahead series; the operator has seen the last hour's miss when it
+    clears, so what is left is what it could not know an hour ahead. Net load
+    is load less wind and solar."""
 
     def net_load(market: str) -> np.ndarray:
         total = 0.0
         for kind, sign in (("load", 1.0), ("wind", -1.0), ("pv", -1.0), ("rtpv", -1.0)):
             series = _year(rts.timeseries(kind, market))
-            total = (
-                total
-                + sign
-                * series.select(
-                    pl.sum_horizontal(
-                        [c for c in series.columns if c not in rts.TIME_COLS]
-                    )
-                )
-                .to_numpy()
-                .ravel()
-            )
+            total = total + sign * series.select(pl.sum_horizontal([c for c in series.columns if c not in rts.TIME_COLS])).to_numpy().ravel()
         return total
 
-    return net_load("real_time").reshape(-1, 12) - net_load("day_ahead")[:, None]
+    miss = net_load("real_time").reshape(-1, 12) - net_load("day_ahead")[:, None]  # real-time less day-ahead
+    last_hour = np.concatenate([[0.0], miss.mean(axis=1)[:-1]])
+    return miss - last_hour[:, None]
 
 
 def windows(
@@ -247,7 +256,7 @@ def tighten(scenarios: list[Scenario], reserve_margin: float | None) -> list[Sce
             sc,
             delta=sc.delta * s,
             d_other=sc.d_other * s,
-            epsilon_std=sc.epsilon_std * s,
+            error_fit=None if sc.error_fit is None else Normal(sc.error_fit.m * s, sc.error_fit.v * s),
             error=None if sc.error is None else sc.error * s,
         )
         for sc in scenarios
@@ -262,14 +271,6 @@ def margin(scenario: Scenario) -> float:
 # ----------------------------------------------------------------------------
 # 𝓜_ω
 # ----------------------------------------------------------------------------
-@dataclass(frozen=True)
-class Normal:
-    """An error model: error ~ N(m, v²), in MW."""
-
-    m: float
-    v: float
-
-
 @dataclass(frozen=True)
 class Points:
     """An error model: the error is ``mw[i]`` with ``probability[i]``. One
@@ -356,7 +357,7 @@ def named_ordcs(scenario: Scenario) -> dict[str, ORDC]:
     second = PJM_SECOND_STEP / PJM_PENALTY
     extended = Points(np.array([0.0, PJM_EXTENDED * largest]), np.array([1.0 - second, second]))
     return {
-        "ercot": ORDC(largest, np.zeros(thermal.size), Normal(0.0, scenario.epsilon_std), Expectation(VOLL), "ercot"),
+        "ercot": ORDC(largest, np.zeros(thermal.size), scenario.error_fit, Expectation(VOLL), "ercot"),
         "pjm": ORDC(0.0, thermal, extended, Expectation(PJM_PENALTY), "pjm"),
         "n-1": ORDC(0.0, thermal, Points(np.zeros(1), np.ones(1)), Maximum(), "n-1"),
     }
@@ -581,7 +582,7 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
                 s.cost_inv,
                 s.cost_gen,
                 s.cost_res,
-                np.array([s.epsilon_std]),
+                np.array([s.error_fit.m, s.error_fit.v]),
             ):
                 h.update(np.ascontiguousarray(a).tobytes())
         key = Path.home() / ".cache" / "flexload" / "C_inv" / f"{h.hexdigest()}.json"

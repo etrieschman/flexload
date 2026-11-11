@@ -16,12 +16,12 @@
 from .load import BETA_MIN, FIRM, P, WORKLOAD, Belief, LoadType, S, V, best_response, c_sigma, feasible, fixed_point, named_types, payoff, planner
 from .realized import reserve, shed, worst
 from .metrics import alignment, fairness, recovery, respond, settle, summary, table, tex
-from .system import VOLL, C_inv, Dispatch, Expectation, Market, Maximum, Normal, ORDC, Points, Scenario, margin, named_ordcs, scenario, steps, tighten, windows
+from .system import VOLL, C_inv, Dispatch, Expectation, Market, Maximum, Normal, ORDC, Points, Scenario, fit, margin, named_ordcs, scenario, steps, tighten, windows
 from .tariff import LAYERS, Marginal, Share, Tariff, TwoPart, named_tariffs, peak_hour
 
 __all__ = [
     "BETA_MIN", "Belief", "C_inv", "Dispatch", "Expectation", "FIRM", "LAYERS", "LoadType", "Marginal", "Market", "Maximum", "Normal", "ORDC", "P", "Points", "S", "Scenario", "Share", "Tariff",
-    "TwoPart", "V", "VOLL", "WORKLOAD", "alignment", "best_response", "c_sigma", "fairness", "feasible",
+    "TwoPart", "V", "VOLL", "WORKLOAD", "alignment", "best_response", "c_sigma", "fairness", "feasible", "fit",
     "fixed_point", "margin", "named_ordcs", "named_tariffs", "named_types", "payoff", "peak_hour", "planner",
     "recovery", "reserve", "respond", "scenario", "settle", "shed", "steps", "summary", "table", "tex", "tighten", "windows", "worst",
 ]

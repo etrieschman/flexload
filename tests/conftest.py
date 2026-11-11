@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from flexload.system import Market, Scenario, named_ordcs
+from flexload.system import Market, Normal, Scenario, named_ordcs
 
 C_INV = 520_000.0  # annual cost of the investment layer, $, arbitrary
 
@@ -25,7 +25,7 @@ def small() -> Scenario:
         nameplate=nameplate,
         unit=np.array([0, 1, 2]),
         names=("base", "mid", "peaker"),
-        epsilon_std=10.0,  # MW; sets the ERCOT curve
+        error_fit=Normal(0.0, 10.0),  # MW; sets the ERCOT curve
     )
 
 
