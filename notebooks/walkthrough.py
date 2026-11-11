@@ -41,7 +41,7 @@ ALPHA = 0.05  # the load's size, its share of system load
 RESERVE_MARGIN = 0.08  # spare capacity at the year's tightest hour (the default)
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
 RESERVE = "ercot"  # "ercot" (demand curve) or "pjm" (hard requirement)
-BUSINESS = "data_center_train"  # or "data_center_infer", "bitcoin_mine": sets (psi, beta, A) of the swept types
+BUSINESS = "training"  # or "inference": what the data center runs, which sets (psi, chi, beta, A, kappa)
 TYPE = "mover"  # inflexible, mover, controllable, emergency, curtailable
 print(f"RTS-GMLC data folder:\t{rts.data_root()}")
 print(f"RTS-GMLC git ref:\t{rts.REF[:8]}")

@@ -53,7 +53,7 @@ ALPHA = 0.05
 RESERVE_MARGIN = 0.08
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC has no reserve offers
 TYPE = "mover"  # the type Figure 1 and Table 3 follow
-BUSINESSES = {"data_center_train": "training DC", "bitcoin_mine": "bitcoin mine"}
+BUSINESSES = {"training": "training DC", "inference": "inference DC"}
 MARKETS = ("ercot", "pjm")
 ALPHAS = (0.01, 0.05, 0.10, 0.20)
 SWEPT = ("mover", "controllable", "curtailable")  # the types whose (ψ, β, A) the business sets
@@ -83,7 +83,7 @@ def publish(path: Path) -> None:
 percent = lambda col: (pl.col(col) * 100).round().cast(pl.Int64)  # noqa: E731
 DAMBLUE, FTRORANGE, CAPPLUM = "#1F4E79", "#BF5700", "#703078"  # the report's colors
 SLATELT, INK = "#96A0AA", "#262C34"
-COLOR = {"data_center_train": DAMBLUE, "bitcoin_mine": FTRORANGE}  # business: one hue everywhere
+COLOR = {"training": DAMBLUE, "inference": FTRORANGE}  # business: one hue everywhere
 POOL = {"energy": SLATELT, "reserve": CAPPLUM, "investment": INK}  # the pools, where no business applies
 
 

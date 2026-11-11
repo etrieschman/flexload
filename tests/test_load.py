@@ -36,7 +36,7 @@ def small_scenario(T, delta):
 def test_best_response_first_order_condition_elastic():
     T, psi = 4, 100.0
     delta, lam = np.full(T, 50.0), np.array([10.0, 20.0, 30.0, 40.0])
-    theta = LoadType(psi, 0.5, np.zeros((0, T)), 0.0)
+    theta = LoadType(psi, 0.0, 0.5, np.zeros((0, T)), 0.0)
     b = posted(lam, np.zeros(T), delta)
     d, sigma = best_response(theta, energy_only(T), small_scenario(T, delta), Belief(b, False), b)
     assert np.allclose(d, delta * (1 - lam / (2 * psi)), atol=1e-4)  # max −(ψ/δ)(d−δ)² − λd → d = δ(1 − λ/2ψ)
@@ -46,7 +46,7 @@ def test_best_response_first_order_condition_elastic():
 def test_best_response_conserves_energy_over_the_period():
     T, psi = 4, 100.0
     delta, lam = np.full(T, 50.0), np.array([10.0, 20.0, 30.0, 40.0])
-    theta = LoadType(psi, 0.5, np.ones((1, T)), 0.0)
+    theta = LoadType(psi, 0.0, 0.5, np.ones((1, T)), 0.0)
     b = posted(lam, np.zeros(T), delta)
     d, _ = best_response(theta, energy_only(T), small_scenario(T, delta), Belief(b, False), b)
     assert np.isclose(d.sum(), delta.sum(), atol=1e-4)
@@ -56,16 +56,33 @@ def test_best_response_conserves_energy_over_the_period():
 def test_tolerance_binds():
     T = 4
     delta, lam = np.full(T, 50.0), np.array([0.0, 0.0, 0.0, 1000.0])
-    theta = LoadType(1.0, 0.1, np.zeros((0, T)), 0.0)
+    theta = LoadType(1.0, 0.0, 0.1, np.zeros((0, T)), 0.0)
     b = posted(lam, np.zeros(T), delta)
     d, _ = best_response(theta, energy_only(T), small_scenario(T, delta), Belief(b, False), b)
     assert np.isclose(d[3], 45.0, atol=1e-4)
 
 
+def test_strike_serves_below_and_cuts_above():
+    """A load with a strike and no penalty consumes δ where the price is below
+    χ and cuts to its tolerance where it is above."""
+    T = 4
+    delta, lam = np.full(T, 50.0), np.array([20.0, 900.0, 1100.0, 4000.0])
+    theta = LoadType(0.0, 1000.0, 0.1, np.zeros((0, T)), 0.0)
+    b = posted(lam, np.zeros(T), delta)
+    d, _ = best_response(theta, energy_only(T), small_scenario(T, delta), Belief(b, False), b)
+    assert np.allclose(d, [50.0, 50.0, 45.0, 45.0], atol=1e-4)
+
+
+def test_firm_level_is_the_contract_not_the_workload():
+    delta = np.array([40.0, 50.0])
+    levels = [named_types(2, w)["curtailable"].d_firm(delta) for w in ("training", "inference")]
+    assert np.allclose(levels[0], levels[1]) and np.allclose(levels[0], 0.9 * 40.0)
+
+
 def test_reserve_offer_where_price_beats_cost():
     T = 4
     delta = np.full(T, 50.0)
-    theta = LoadType(50.0, 0.2, np.zeros((0, T)), 0.05, sells_reserve=True)
+    theta = LoadType(50.0, 0.0, 0.2, np.zeros((0, T)), 0.0, 0.05, sells_reserve=True)
     assert np.allclose(c_sigma(theta, delta), 1.0)  # 2 · .05 · 50 · .2, a rate in $/MWh
     mu = np.array([0.0, 0.5, 2.0, 5.0])
     b = posted(np.zeros(T), mu, delta)
@@ -128,14 +145,14 @@ def test_table_and_choice(small):
     assert t.shape[0] == 2 and (t["efficiency"] >= -1e-4).all()
 
 
-def test_curtailable_planner_is_not_hurt_by_the_instrument(n1, small):
+def test_curtailable_load_bids_at_least_its_firm_level(n1, small):
+    """The contract keeps 0.9 min δ firm; training tolerates a 50% cut, so the
+    floor binds. The planner does at least as well as the load's response."""
     tight = replace(small, d_other=small.d_other + np.array([0.0, 0.0, 60.0, 0.0]))
-    types = named_types(tight.T)
-    cleared = {}
-    for name in ("curtailable", "mover"):
-        theta = types[name]
-        d1, s1 = planner(theta, n1, tight)
-        cleared[name] = welfare(theta, n1, tight, n1.clear(tight, d1, s1, c_sigma(theta, tight.delta), theta.d_firm(tight.delta)))
-    assert cleared["curtailable"] >= cleared["mover"] - 1e-4
-    dispatch, _, _, _ = respond(types["curtailable"], named_tariffs(tight)["tau_0"], n1, tight)
-    assert cleared["curtailable"] >= welfare(types["curtailable"], n1, tight, dispatch) - 1e-4
+    theta = named_types(tight.T)["curtailable"]
+    d_firm = theta.d_firm(tight.delta)
+    d1, s1 = planner(theta, n1, tight)
+    dispatch, _, _, _ = respond(theta, named_tariffs(tight)["tau_0"], n1, tight)
+    assert np.all(d1 >= d_firm - 1e-6) and np.all(dispatch.d_bid >= d_firm - 1e-6)
+    planned = n1.clear(tight, d1, s1, c_sigma(theta, tight.delta), d_firm)
+    assert welfare(theta, n1, tight, planned) >= welfare(theta, n1, tight, dispatch) - 1e-4

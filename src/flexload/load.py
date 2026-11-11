@@ -27,91 +27,72 @@ from .tariff import Tariff
 # ----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class LoadType:
-    """θ = (ψ, β, A, p, sells reserve, curtailable). (ψ, β, A, p) are private:
-    the weight on following δ, the tolerated deviation, the blocks of hours over
-    which energy is conserved (``A`` is (M, T), one row per block), and the
+    """θ = (ψ, χ, β, A, κ, p, sells reserve, firm). (ψ, χ, β, A, κ, p) are
+    private: the weight on following δ, the strike (the value of a MWh the load
+    does not consume), the tolerated deviation, the blocks of hours over which
+    energy is conserved (``A`` is (M, T), one row per block), the load's
+    within-hour standard deviation as a share of its consumption, and the
     believed chance a sold MW is called. The two designations are public.
-    ``sells_reserve``: offers σ at c^σ. ``curtailable``: declares a firm level
-    before the window; the operator may curtail it to that level where serving it
-    costs more than VOLL, unpaid, in exchange for its connection. A load sells
-    reserve or is curtailable, never both: a MW is headroom or σ."""
+    ``sells_reserve``: offers σ at c^σ. ``firm``: the data center's contract,
+    the share of min_t δ_t it keeps firm; the operator may curtail it to that
+    level where serving it costs more than c^shed, unpaid, in exchange for its
+    connection. The contract is the data center's, so it is the same whatever
+    workload runs. A load sells reserve or is curtailable, never both: a MW is
+    headroom or σ."""
 
     psi: float  # the loss rate, $/MWh: cutting a fraction x of δ_t costs 2ψx per MWh cut
+    chi: float  # the strike, $/MWh: each MWh below δ_t loses χ
     beta: float  # tolerated deviation as a fraction of δ
     A: np.ndarray  # (M, T) energy-conservation blocks
-    p: float  # believed probability that offered reserve is called
+    kappa: float  # sd(η_t) = κ d_t: within-hour variability as a share of consumption
+    p: float = 0.0  # believed probability that offered reserve is called
     sells_reserve: bool = False
-    curtailable: bool = False
+    firm: float | None = None  # share of min δ kept firm; None: not curtailable
     name: str = ""
 
     def __post_init__(self):
         if self.sells_reserve and self.curtailable:
             raise ValueError("a load sells reserve or is curtailable, never both")
 
+    @property
+    def curtailable(self) -> bool:
+        return self.firm is not None
+
     def d_firm(self, delta: np.ndarray) -> np.ndarray | None:
         """The declared firm level, one MW amount over the window:
-        dᶠⁱʳᵐ = (1 − β) min_t δ_t, the largest cut the type tolerates in its
-        lowest hour. None unless the load is curtailable."""
+        dᶠⁱʳᵐ = firm × min_t δ_t. None unless the load is curtailable."""
         if not self.curtailable:
             return None
-        return np.full(delta.shape, (1.0 - self.beta) * float(np.min(delta)))
+        return np.full(delta.shape, self.firm * float(np.min(delta)))
 
 
-# Placeholder parameter levels (docs/assumptions.md #16).
-PSI = {"low": 50.0, "medium": 100.0, "high": 200.0}  # $/MWh; a price of 2βψ pushes the load to its band
-BETA = {"low": 0.05, "medium": 0.2, "high": 0.5}
-P = {"low": 0.05, "high": 0.2}
-BUSINESS = {  # (ψ, β, A): what the load is, behind its designation
-    "data_center_infer": (
-        "high",
-        "medium",
-        "day",
-    ),  # serves requests as they come; defers batch jobs within the day
-    "data_center_train": (
-        "medium",
-        "medium",
-        "window",
-    ),  # checkpoints and resumes training jobs within the window
-    "bitcoin_mine": (
-        "low",
-        "high",
-        "elastic",
-    ),  # curtailed hashing is lost, not shifted
+# Placeholder values, 2026-11-11 (docs/assumptions.md). (ψ, χ, β, A, κ) by what
+# the data center runs. Training moves work between hours: a penalty on
+# deviation, energy conserved over the window, a wide tolerance. Inference
+# loses the requests it does not serve: a strike, nothing conserved, a narrow
+# tolerance.
+WORKLOAD = {
+    "training": (100.0, 0.0, 0.5, "window", 0.05),
+    "inference": (0.0, 1000.0, 0.1, "elastic", 0.05),
 }
+BETA_MIN = 0.1  # the cut the data center commits to whatever it runs; the contract keeps 1 − β_min firm
+FIRM = 1.0 - BETA_MIN
+P = {"low": 0.05, "high": 0.2}
 
 
-def named_types(T: int, business: str = "data_center_train") -> dict[str, LoadType]:
-    """θ₀…θ₄ of the report's type table, run as a ``business`` in ``BUSINESS``,
-    which sets (ψ, β, A) for the rows that sweep them. The three businesses
-    differ in A, the horizon over which consumption is conserved: a day for an
-    inference data center, the window for a training one, none for a bitcoin
-    mine. The emergency row is fixed at (ψ medium, β low, elastic, p high)."""
-    psi, beta, a = BUSINESS[business]
-    A = {"window": np.ones((1, T)), "elastic": np.zeros((0, T))}
-    if T % 24 == 0:  # the day blocks need whole days
-        A["day"] = np.kron(np.eye(T // 24), np.ones((1, 24)))
+def named_types(T: int, workload: str = "training") -> dict[str, LoadType]:
+    """θ₀…θ₄ of the report's type table for a data center running
+    ``workload``, which sets (ψ, χ, β, A, κ). The emergency row is fixed at
+    (ψ 100, β 0.05, elastic, p high). The curtailable row's contract is
+    ``FIRM``, the same for both workloads."""
+    psi, chi, beta, a, kappa = WORKLOAD[workload]
+    A = {"window": np.ones((1, T)), "elastic": np.zeros((0, T))}[a]
     return {
-        "inflexible": LoadType(PSI[psi], 0.0, np.eye(T), 0.0, name="inflexible"),
-        "mover": LoadType(PSI[psi], BETA[beta], A[a], 0.0, name="mover"),
-        "controllable": LoadType(
-            PSI[psi],
-            BETA[beta],
-            A[a],
-            P["low"],
-            sells_reserve=True,
-            name="controllable",
-        ),
-        "emergency": LoadType(
-            PSI["medium"],
-            BETA["low"],
-            A["elastic"],
-            P["high"],
-            sells_reserve=True,
-            name="emergency",
-        ),
-        "curtailable": LoadType(
-            PSI[psi], BETA[beta], A[a], 0.0, curtailable=True, name="curtailable"
-        ),
+        "inflexible": LoadType(psi, chi, 0.0, np.eye(T), kappa, name="inflexible"),
+        "mover": LoadType(psi, chi, beta, A, kappa, name="mover"),
+        "controllable": LoadType(psi, chi, beta, A, kappa, P["low"], sells_reserve=True, name="controllable"),
+        "emergency": LoadType(100.0, 0.0, 0.05, np.zeros((0, T)), kappa, P["high"], sells_reserve=True, name="emergency"),
+        "curtailable": LoadType(psi, chi, beta, A, kappa, firm=FIRM, name="curtailable"),
     }
 
 
@@ -126,18 +107,23 @@ def c_sigma(theta: LoadType, delta: np.ndarray) -> np.ndarray:
 
 
 def V(theta: LoadType, delta: np.ndarray, d, sigma):
-    """V(d, σ) = −Σ_t (ψ/δ_t)(d_t − δ_t)² − c^σᵀσ, on what the load consumes and
-    what cleared. Value is per MW of load: with x_t = (δ_t − d_t)/δ_t the loss is
-    ψ δ_t x_t², so a load twice the size loses twice as much from the same
-    fractional cut, and the planner's cut λ_t/2ψ is a fraction of δ_t."""
-    return -cp.sum(cp.multiply(theta.psi / delta, cp.square(d - delta))) - cp.sum(
-        cp.multiply(c_sigma(theta, delta), sigma)
+    """V(d, σ) = −χ Σ_t max(δ_t − d_t, 0) − Σ_t (ψ/δ_t)(d_t − δ_t)² − c^σᵀσ, on
+    what the load consumes and what cleared. The strike χ is the value of each
+    MWh below δ_t, lost. The penalty ψ is per MW of load: with
+    x_t = (δ_t − d_t)/δ_t the loss is ψ δ_t x_t², so a load twice the size
+    loses twice as much from the same fractional cut."""
+    return (
+        -theta.chi * cp.sum(cp.pos(delta - d))
+        - cp.sum(cp.multiply(theta.psi / delta, cp.square(d - delta)))
+        - cp.sum(cp.multiply(c_sigma(theta, delta), sigma))
     )
 
 
 def feasible(theta: LoadType, delta: np.ndarray, d_bid, sigma_bid) -> list:
     """𝒟_θ as cvxpy constraints: tolerance |d − δ| ≤ βδ, energy conservation
-    A d = A δ, and for a load that offers reserve d − σ ≥ (1 − β) δ."""
+    A d = A δ, for a load that offers reserve d − σ ≥ (1 − β) δ, and for a
+    curtailable load d ≥ dᶠⁱʳᵐ: it bids at least the level it keeps firm, and
+    what it bids above that is the operator's to curtail."""
     cons = [
         d_bid >= 0.0,
         d_bid - delta <= theta.beta * delta,
@@ -147,6 +133,8 @@ def feasible(theta: LoadType, delta: np.ndarray, d_bid, sigma_bid) -> list:
         cons.append(theta.A @ d_bid == theta.A @ delta)
     if theta.sells_reserve:
         cons += [sigma_bid >= 0.0, d_bid - sigma_bid >= (1.0 - theta.beta) * delta]
+    if theta.curtailable:
+        cons.append(d_bid >= theta.d_firm(delta))
     return cons
 
 

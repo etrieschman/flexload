@@ -71,6 +71,8 @@ class Scenario:
     names: tuple[str, ...] = ()
     start: int = 0  # first hour of the window in the year
     epsilon_std: float = 0.0  # σ of the normal fit to the hourly net-load forecast error ε, MW; one value for the year
+    trip: np.ndarray | None = None  # (J,) hourly probability that the column's unit trips, 1/MTTF; zero for renewables
+    error: np.ndarray | None = None  # (T, 12) net-load error in each five-minute interval, real-time less day-ahead, MW
 
     @property
     def T(self) -> int:
@@ -146,7 +148,7 @@ def scenario(
     renewable = {
         c: s for s in series.values() for c in s.columns if c not in rts.TIME_COLS
     }
-    cols = []  # (cost_gen, cost_res, cost_inv, capacity (T,), nameplate, unit, name)
+    cols = []  # (cost_gen, cost_res, cost_inv, capacity (T,), nameplate, unit, name, trip)
     for u, g in enumerate(rts.gen().iter_rows(named=True)):
         uid, cat = g["gen_uid"], g["category"]
         if cat in EXCLUDED:
@@ -155,14 +157,15 @@ def scenario(
         if uid in renewable:
             avail = renewable[uid][uid].to_numpy().astype(float)
             cols.append(
-                (float(g["vom"] or 0.0), 0.0, inv, avail, float(g["pmax_mw"]), u, uid)  # no offer: nothing idle to hold
+                (float(g["vom"] or 0.0), 0.0, inv, avail, float(g["pmax_mw"]), u, uid, 0.0)  # no offer: nothing idle to hold
             )
         else:
+            trip = 1.0 / float(g["mttf_hr"])  # a failure every MTTF hours of running
             for mw, cost in (
                 blocks.filter(pl.col("gen_uid") == uid).select("mw", "cost").iter_rows()
             ):
                 cols.append(
-                    (float(cost), reserve_offer * float(cost), inv, mw * np.ones(T), float(mw), u, uid)
+                    (float(cost), reserve_offer * float(cost), inv, mw * np.ones(T), float(mw), u, uid, trip)
                 )
     s = Scenario(
         delta=delta,
@@ -175,16 +178,19 @@ def scenario(
         unit=np.array([c[5] for c in cols]),
         names=tuple(c[6] for c in cols),
         start=start,
-        epsilon_std=_epsilon_std(),
+        epsilon_std=float(np.std(_net_load_error().mean(axis=1))),
+        trip=np.array([c[7] for c in cols]),
+        error=_net_load_error()[lo:hi],
     )
     return tighten([s], reserve_margin)[0]
 
 
 @lru_cache(maxsize=None)
-def _epsilon_std() -> float:
-    """σ of the normal fit to the hourly net-load forecast error ε over the year.
-    Net load is load less wind and solar. ε_t is its real-time value, averaged
-    from five minutes to the hour, minus its day-ahead forecast."""
+def _net_load_error() -> np.ndarray:
+    """(8760, 12) net-load forecast error over the year, MW: the real-time
+    value in each five-minute interval less the hour's day-ahead forecast. Net
+    load is load less wind and solar. ``Scenario.epsilon_std`` is the standard
+    deviation of its hourly mean, the σ of the normal fit."""
 
     def net_load(market: str) -> np.ndarray:
         total = 0.0
@@ -203,11 +209,7 @@ def _epsilon_std() -> float:
             )
         return total
 
-    day_ahead = net_load("day_ahead")  # hourly
-    real_time = (
-        net_load("real_time").reshape(-1, 12).mean(axis=1)
-    )  # twelve five-minute values per hour
-    return float(np.std(real_time - day_ahead))
+    return net_load("real_time").reshape(-1, 12) - net_load("day_ahead")[:, None]
 
 
 def windows(
@@ -241,18 +243,12 @@ def tighten(scenarios: list[Scenario], reserve_margin: float | None) -> list[Sce
         return scenarios
     s = (min(margin(sc) for sc in scenarios) + 1.0) / (1.0 + reserve_margin)
     return [
-        Scenario(
-            sc.delta * s,
-            sc.d_other * s,
-            sc.cost_gen,
-            sc.cost_res,
-            sc.cost_inv,
-            sc.capacity,
-            sc.nameplate,
-            sc.unit,
-            sc.names,
-            sc.start,
-            sc.epsilon_std * s,
+        replace(
+            sc,
+            delta=sc.delta * s,
+            d_other=sc.d_other * s,
+            epsilon_std=sc.epsilon_std * s,
+            error=None if sc.error is None else sc.error * s,
         )
         for sc in scenarios
     ]
