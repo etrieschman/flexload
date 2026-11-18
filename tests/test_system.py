@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from flexload.system import HOURS_PER_YEAR, C_inv, Expectation, Market, ORDC, Points, margin, named_ordcs, steps, tighten
+from flexload.system import HOURS_PER_YEAR, C_inv, Expectation, Market, ORDC, Points, margin, named_ordcs, rent, steps, tighten
 
 
 def b0(market, small, d_firm=None):
@@ -14,9 +14,8 @@ def b0(market, small, d_firm=None):
 
 def test_balance_and_capacity(market, small):
     dp = b0(market, small)
-    assert np.allclose(dp.u.sum(axis=0), small.d_sys, atol=1e-6)
-    assert np.all(dp.u + dp.r <= small.capacity + 1e-6)
-    assert dp.status == "optimal"
+    assert np.allclose(dp.g.sum(axis=0), small.d_sys, atol=1e-6)
+    assert np.all(dp.g + dp.r <= small.capacity + 1e-6)
 
 
 def test_energy_price_is_a_marginal_cost(market, small):
@@ -28,14 +27,14 @@ def test_energy_price_is_a_marginal_cost(market, small):
 
 def test_requirement_covers_the_largest_unit(n1, small):
     dp = b0(n1, small)
-    u_unit, r_unit = small.units @ dp.u, small.units @ dp.r
+    u_unit, r_unit = small.units @ dp.g, small.units @ dp.r
     R = dp.r.sum(axis=0)
     for t in range(small.T):
         assert np.all(R[t] - r_unit[:, t] >= u_unit[:, t] - 1e-6)
     assert np.all(dp.mu >= -1e-6)
 
 
-def test_ercot_demand_curve_price_reads_off_curve(small):
+def test_free_reserve_fills_the_curve(small):
     # a 10 MW contingency at 100, then 10 MW more at 0.4 × 100 = 40
     curve = ORDC(10.0, np.zeros(3), Points(np.array([0.0, 10.0]), np.array([0.6, 0.4])), Expectation(100.0))
     edges, prices = steps(curve, 5000.0)
@@ -49,7 +48,7 @@ def test_ercot_demand_curve_price_reads_off_curve(small):
 
 def test_C_sys_is_generation_cost_when_reserve_free(n1, small):
     dp = b0(n1, small)
-    assert np.isclose(float(n1.C_sys(small, dp.u, dp.r, dp.sigma, dp.c_sigma, dp.shed, dp.y, dp.C_ordc).value), float((small.cost_gen[:, None] * dp.u).sum()), rtol=1e-6)
+    assert np.isclose(float(n1.C_sys(small, dp.g, dp.r, dp.sigma, np.zeros(dp.d.shape), dp.s, dp.C_ordc).value), float((small.cost_gen[:, None] * dp.g).sum()), rtol=1e-6)
 
 
 def test_pools_on_the_dispatch(market, small):
@@ -58,17 +57,9 @@ def test_pools_on_the_dispatch(market, small):
     assert np.isclose(dp.C_inv, market.C_inv * small.T / HOURS_PER_YEAR)
 
 
-def test_short_run_needs_C_inv(small):
+def test_clear_needs_C_inv(small):
     with pytest.raises(ValueError):
         b0(Market(named_ordcs(small)["n-1"]), small)
-
-
-def test_long_run_builds_capacity(small):
-    market = Market(named_ordcs(small)["n-1"], long_run=True)
-    dp = b0(market, small)
-    assert np.all(dp.y >= -1e-6)
-    assert dp.y.sum() >= small.d_sys.max() - 1e-3
-    assert dp.C_inv == 0.0
 
 
 def test_firm_level_is_respected(n1, small):
@@ -88,15 +79,15 @@ def test_load_offer_clears_when_cheap(n1, small):
 def test_other_load_sheds_at_voll_when_short(n1, small):
     tight = replace(small, d_other=small.d_other + np.array([0.0, 0.0, 200.0, 0.0]))
     dp = b0(n1, tight)
-    assert dp.shed[2] > 0.0 and np.allclose(dp.shed[[0, 1, 3]], 0.0, atol=1e-6)
+    assert dp.s[2] > 0.0 and np.allclose(dp.s[[0, 1, 3]], 0.0, atol=1e-6)
     assert np.isclose(dp.lam[2], 5000.0, rtol=1e-6)
-    assert np.isclose(float(n1.C_sys(tight, dp.u, dp.r, dp.sigma, dp.c_sigma, dp.shed, dp.y, dp.C_ordc).value), float((tight.cost_gen[:, None] * dp.u).sum()) + 5000.0 * dp.shed.sum(), rtol=1e-6)
+    assert np.isclose(float(n1.C_sys(tight, dp.g, dp.r, dp.sigma, np.zeros(dp.d.shape), dp.s, dp.C_ordc).value), float((tight.cost_gen[:, None] * dp.g).sum()) + 5000.0 * dp.s.sum(), rtol=1e-6)
 
 
 def test_C_inv_is_annual_cost_less_rents(n1, small):
     annual = C_inv(n1, [small] * 3, cache=False)
     dp = b0(n1, small)
-    profit = float(np.sum((dp.lam - small.cost_gen[:, None]) * dp.u + (dp.mu - small.cost_res[:, None]) * dp.r))
+    profit = float(np.sum((dp.lam - small.cost_gen[:, None]) * dp.g + (dp.mu - small.cost_res[:, None]) * dp.r))
     cost = float(np.sum(small.cost_inv * small.nameplate))
     assert np.isclose(annual, max(cost - 3 * profit * HOURS_PER_YEAR / (3 * small.T), 0.0))
 
@@ -117,11 +108,10 @@ def test_rent_is_on_available_capacity_not_nameplate(n1, small):
     assert windy.renewable.tolist() == [False, False, False, True]
     dp = b0(replace(n1, ordc=named_ordcs(windy)["n-1"]), windy)  # the construct's units are the fleet's
     assert np.allclose(dp.r[3], 0.0, atol=1e-6)
-    wind_rent = float(np.sum(dp.lam * dp.u[3]))
+    wind_rent = float(np.sum(dp.lam * dp.g[3]))
     assert np.isclose(float(np.sum(dp.nu[3] * windy.capacity[3])), wind_rent, rtol=1e-6)
     assert wind_rent < float(np.sum(dp.lam * windy.nameplate[3]))
-    from flexload.metrics import rent
-    assert np.isclose(rent(windy, dp), float(np.sum((dp.lam - windy.cost_gen[:, None]) * dp.u)), rtol=1e-6)
+    assert np.isclose(rent(windy, dp), float(np.sum((dp.lam - windy.cost_gen[:, None]) * dp.g)), rtol=1e-6)
 
 
 def test_ordc_contingency_is_the_largest_thermal_unit(small):
@@ -165,7 +155,7 @@ def test_pjm_runs_short_of_reserve_before_it_sheds_load(small):
     tight = replace(small, d_other=np.full(small.T, 180.0))  # d_sys = 200 of 260 MW
     hard = b0(Market(named_ordcs(tight)["n-1"], C_inv=0.0), tight)
     curve = b0(Market(named_ordcs(tight)["pjm"], C_inv=0.0), tight)
-    assert np.all(hard.shed > 1.0) and np.all(hard.mu > 850.0)
-    assert np.allclose(curve.shed, 0.0, atol=1e-6)
+    assert np.all(hard.s > 1.0) and np.all(hard.mu > 850.0)
+    assert np.allclose(curve.s, 0.0, atol=1e-6)
     assert np.allclose(curve.mu, 850.0, atol=1e-4)
     assert np.all(curve.C_ordc > 0.0)

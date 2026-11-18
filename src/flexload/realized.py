@@ -1,8 +1,8 @@
 """Realized dispatch: after the market clears, the imbalance ε_t realizes, and
 reserve covers it or load is shed. The operator's ORDC is its model of ε_t;
-this is the ε_t nature draws. Notes of 2026-11-06, "Realized ε_t".
+this is the ε_t nature draws.
 
-    ε_t = Σ_{j∈𝒪} u_jt  +  net-load error  +  η_t
+    ε_t = Σ_{j∈𝒪} (g_jt + r_jt)  +  net-load error  +  η_t
 
 Units trip independently, each with its hourly probability 1/MTTF, and a unit
 that trips loses its output and its reserve. The net-load error is the year's
@@ -16,32 +16,52 @@ from __future__ import annotations
 import numpy as np
 
 from .load import LoadType
-from .system import Dispatch, Scenario
-
-
-def reserve(dispatch: Dispatch) -> np.ndarray:
-    """(T,) reserve held, R_t = Σ_j r_jt + σ_t + (d_t − dᶠⁱʳᵐ_t)."""
-    return dispatch.r.sum(axis=0) + dispatch.sigma + (dispatch.d - dispatch.d_firm)
+from .system import Dispatch, Scenario, reserve
 
 
 def shed(scenario: Scenario, dispatch: Dispatch, theta: LoadType, rng: np.random.Generator, n: int) -> np.ndarray:
     """(n, T) load shed in MWh, one row per draw of the window:
-    shed_t = mean over the hour's intervals of max(0, ε_t − reserve left),
-    where the reserve left is R_t less the reserve on the units that tripped.
+    shed_t = mean over the hour's intervals of max(0, ε_t − R_t), where ε_t
+    counts the output and the reserve of the units that tripped.
     The draws depend on ``rng`` and the scenario's shape only, so one seed
     gives the same trips and the same η_t/κd_t under every construct and type."""
     M = scenario.units
     out = rng.random((n, scenario.T, M.shape[0])) < (M @ scenario.trip / M.sum(axis=1))  # (n, T, U): unit tripped
     eta = theta.kappa * dispatch.d[:, None] * rng.standard_normal((n, scenario.T, scenario.error.shape[1]))
-    lost_output = np.einsum("ntu,ut->nt", out, M @ dispatch.u)
+    lost_output = np.einsum("ntu,ut->nt", out, M @ dispatch.g)
     lost_reserve = np.einsum("ntu,ut->nt", out, M @ dispatch.r)
     epsilon = lost_output[:, :, None] + scenario.error + eta  # (n, T, 12)
-    return np.maximum(epsilon - (reserve(dispatch) - lost_reserve)[:, :, None], 0.0).mean(axis=2)
+    R = reserve(dispatch.r, dispatch.sigma, dispatch.d, dispatch.d_firm).value
+    return np.maximum(epsilon - (R - lost_reserve)[:, :, None], 0.0).mean(axis=2)
 
 
 def worst(scenario: Scenario, dispatch: Dispatch, k: int) -> np.ndarray:
     """(T,) load shed in MW if the k thermal units with the most output and
     reserve trip in that hour, and nothing else is short: the named stress
     case. A requirement on the largest unit covers k = 1."""
-    lost = scenario.units @ ((dispatch.u + dispatch.r) * ~scenario.renewable[:, None])  # (U, T): what a unit's trip takes away
-    return np.maximum(np.sort(lost, axis=0)[-k:].sum(axis=0) - reserve(dispatch), 0.0)
+    lost = scenario.units @ ((dispatch.g + dispatch.r) * ~scenario.renewable[:, None])  # (U, T): what a unit's trip takes away
+    R = reserve(dispatch.r, dispatch.sigma, dispatch.d, dispatch.d_firm).value
+    return np.maximum(np.sort(lost, axis=0)[-k:].sum(axis=0) - R, 0.0)
+
+
+def outcomes(scenario: Scenario, dispatch: Dispatch, theta: LoadType, draws: int) -> dict:
+    """What a dispatch holds and what it sheds once the imbalance realizes: the
+    reserve pool C^res, the ORDC's cost C^ORDC, the lowest reserve held, load
+    shed over ``draws`` draws (the window's MWh: its mean, the mean of the
+    worst 5% of draws, since shed is rare and a percentile is often zero, the
+    worst draw, and every draw as ``shed_draws``), and the worst hour's shed if
+    the largest one or two thermal units trip. The seed is the window's start,
+    so every construct and type sees the same draws."""
+    mwh = shed(scenario, dispatch, theta, np.random.default_rng(scenario.start), draws).sum(axis=1)
+    R = reserve(dispatch.r, dispatch.sigma, dispatch.d, dispatch.d_firm).value
+    return {
+        "reserve_cost": float(dispatch.C_res.sum()),
+        "C_ordc": float(dispatch.C_ordc.sum()),
+        "reserve_min": float(R.min()),
+        "shed": float(mwh.mean()),
+        "shed_tail": float(np.sort(mwh)[-max(draws // 20, 1):].mean()),
+        "shed_max": float(mwh.max()),
+        "shed_draws": mwh.tolist(),
+        "worst_1": float(worst(scenario, dispatch, 1).max()),
+        "worst_2": float(worst(scenario, dispatch, 2).max()),
+    }

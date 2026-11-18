@@ -10,7 +10,7 @@
 #
 # This notebook sweeps the margin and reports, for each market on the B0 path
 # over the year, the fleet's rent (its profit, revenue above fuel and reserve
-# offers, scaled to 8,760 hours), its investment cost Σ_j cⁱⁿᵛ_j ū_j on nameplate, the pool
+# offers, scaled to 8,760 hours), its investment cost Σ_j cⁱⁿᵛ_j ḡ_j on nameplate, the pool
 # max(0, cost − rent), the scarcity hours in the year and in week 29, and the
 # energy shed. An hour is scarce when μ_t is above every reserve offer.
 #
@@ -38,7 +38,7 @@ import numpy as np
 import polars as pl
 
 import flexload as fl
-from flexload.metrics import rent as fleet_rent
+from flexload.system import rent as fleet_rent
 
 pl.Config.set_tbl_rows(-1)
 pl.Config.set_tbl_cols(-1)
@@ -75,7 +75,7 @@ for margin in MARGINS:
         for i, w in enumerate(weeks):
             b0 = mk.clear(w, w.delta, np.zeros(T), np.zeros(T))
             rent += fleet_rent(w, b0)  # the fleet's profit: revenue above fuel and reserve offers
-            shed += float(b0.shed.sum())
+            shed += float(b0.s.sum())
             hot = int((b0.mu > w.cost_res.max() + 1e-6).sum())  # the reserve price is above every reserve offer
             scarce["year"] += hot
             scarce["week"] += hot if i == WEEK else 0

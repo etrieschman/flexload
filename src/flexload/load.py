@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import cvxpy as cp
 import numpy as np
 
-from .system import Dispatch, Market, Scenario
+from .system import Dispatch, Market, Scenario, solve, steps
 from .tariff import Tariff
 
 
@@ -138,12 +138,12 @@ def feasible(theta: LoadType, delta: np.ndarray, d_bid, sigma_bid) -> list:
     return cons
 
 
-def S(theta: LoadType, market: Market, scenario: Scenario, d, sigma, u, r, shed, y, C_ordc):
+def S(theta: LoadType, market: Market, scenario: Scenario, d, sigma, g, r, s, C_ordc):
     """S = V(d, σ) − C_sys + c^σᵀσ, welfare on what the load consumed and what
     cleared. The offer cost sits in V and in C_sys, so it is added back once.
     On numbers or variables alike; read a number with ``.value``."""
     offer = c_sigma(theta, scenario.delta)
-    C_sys = market.C_sys(scenario, u, r, sigma, offer, shed, y, C_ordc)
+    C_sys = market.C_sys(scenario, g, r, sigma, offer, s, C_ordc)
     return V(theta, scenario.delta, d, sigma) - C_sys + offer @ sigma
 
 
@@ -216,9 +216,7 @@ def best_response(
         d_tilde = cp.multiply(1.0 - cut, d_bid) + cut * theta.d_firm(delta)
     objective = payoff(theta, tariff, scenario, belief, b0, d_tilde, sigma_bid)
     problem = cp.Problem(cp.Maximize(objective), cons)
-    problem.solve(solver=solver)
-    if problem.status not in ("optimal", "optimal_inaccurate"):
-        raise RuntimeError(f"best response failed: {problem.status}")
+    solve(problem, solver, {}, "best response")
     if theta.sells_reserve:
         sigma_bid = np.asarray(sigma_bid.value)
     return np.asarray(d_bid.value), sigma_bid
@@ -233,7 +231,7 @@ def fixed_point(
     tol: float = 1e-3,
     max_iter: int = 50,
     damping: float | None = 0.5,
-) -> tuple[np.ndarray, np.ndarray, Dispatch, Dispatch, list[float]]:
+) -> tuple[Dispatch, Dispatch, list[float]]:
     """The consistent price-taker. Respond to the belief, clear at the response,
     make that the belief, repeat until the bid stops moving. The belief each
     round is ``Belief(the last clearing, consistent=True)``, ``b0`` to start:
@@ -242,16 +240,16 @@ def fixed_point(
     cut it. ``b0`` is the dispatch at (δ, 0), as for ``best_response``.
     Each step moves a fraction ``damping`` toward the new response; ``None`` is
     the harmonic step 1/(k+1), which averages out the two-cycles a step merit
-    order produces at scarcity hours. Returns (d_bid, sigma_bid, the dispatch
-    at the response, the belief the final bid answered to, bid changes). If
-    ``history[-1]`` is above ``tol`` the map did not settle: price-taking is the
-    wrong model there (RQ3b)."""
+    order produces at scarcity hours. Returns the dispatch at the response
+    (its ``d_bid`` is the bid), the dispatch the final bid answered to, and the
+    bid's change each round. If ``history[-1]`` is above ``tol`` the map did
+    not settle: price-taking is the wrong model there."""
     delta, T = scenario.delta, scenario.T
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
-    belief, d_prev, sigma_prev, history = b0, delta.copy(), np.zeros(T), []
+    dispatch, believed, d_prev, sigma_prev, history = b0, b0, delta.copy(), np.zeros(T), []
     for k in range(max_iter):
         d_bid, sigma_bid = best_response(
-            theta, tariff, scenario, Belief(belief, consistent=True), b0
+            theta, tariff, scenario, Belief(dispatch, consistent=True), b0, solver=market.solver
         )
         step = damping if damping is not None else 1.0 / (k + 1)
         d_bid = step * d_bid + (1 - step) * d_prev
@@ -259,53 +257,46 @@ def fixed_point(
         history.append(
             float(np.abs(d_bid - d_prev).max() + np.abs(sigma_bid - sigma_prev).max())
         )
-        believed, belief = (
-            belief,
+        believed, dispatch = (
+            dispatch,
             market.clear(scenario, d_bid, sigma_bid, offer, d_firm),
         )
         d_prev, sigma_prev = d_bid, sigma_bid
         if history[-1] < tol:
             break
-    return d_prev, sigma_prev, belief, believed, history
+    return dispatch, believed, history
 
 
 # ----------------------------------------------------------------------------
 # B1
 # ----------------------------------------------------------------------------
-def planner(
-    theta: LoadType, market: Market, scenario: Scenario, solver: str = "GUROBI"
-) -> tuple[np.ndarray, np.ndarray]:
+def planner(theta: LoadType, market: Market, scenario: Scenario) -> tuple[np.ndarray, np.ndarray]:
     """B1: max S over (d_bid, σ_bid) ∈ 𝒟_θ, the load's and the operator's
     variables in one program. A curtailable type gives the planner the
-    operator's instrument: headroom above dᶠⁱʳᵐ counts toward reserve. The planner
-    consumes what it bids; curtailment below the bid is the operator's scarcity
-    action, not a scheduling device. The planner consumes its bid, d = d_bid.
-    Returns the bid (d_bid, σ_bid); S^B1 is read from its clearing, as for R."""
+    operator's instrument: headroom above dᶠⁱʳᵐ counts toward reserve. The
+    planner consumes its bid, d = d_bid; curtailment below the bid is the
+    operator's scarcity action, not a scheduling device. Returns the bid
+    (d_bid, σ_bid); S^B1 is read from its clearing, as for R."""
     T, J, delta = scenario.T, scenario.J, scenario.delta
     d_bid = cp.Variable(T)
     sigma_bid = cp.Variable(T) if theta.sells_reserve else np.zeros(T)
     sigma = (
         cp.Variable(T, nonneg=True) if theta.sells_reserve else np.zeros(T)
     )  # what clears
-    u, r, shed = (
+    g, r, s = (
         cp.Variable((J, T), nonneg=True),
         cp.Variable((J, T), nonneg=True),
         cp.Variable(T, nonneg=True),
     )
-    y = cp.Variable(J, nonneg=True) if market.long_run else scenario.nameplate
     d_firm = theta.d_firm(delta) if theta.curtailable else d_bid
-    z = cp.Variable((market.curve()[1].size, T), nonneg=True)
-    C_ordc = market.C_ordc(scenario, u, r, z)
+    z = cp.Variable((steps(market.ordc, market.c_shed)[1].size, T), nonneg=True)
+    C_ordc = market.C_ordc(scenario, g, r, z)
     cons = feasible(theta, delta, d_bid, sigma_bid) + list(
-        market.constraints(
-            scenario, sigma_bid, d_firm, u, r, sigma, d_bid, y, z, shed
-        ).values()
+        market.constraints(scenario, d_bid, sigma, g, r, s, z, sigma_bid, d_firm).values()
     )
-    welfare = S(theta, market, scenario, d_bid, sigma, u, r, shed, y, C_ordc)
+    welfare = S(theta, market, scenario, d_bid, sigma, g, r, s, C_ordc)
     problem = cp.Problem(cp.Maximize(welfare), cons)
-    problem.solve(solver=solver)
-    if problem.status not in ("optimal", "optimal_inaccurate"):
-        raise RuntimeError(f"planner failed: {problem.status}")
+    solve(problem, market.solver, market.solver_options, "planner")
     if theta.sells_reserve:
         sigma_bid = np.asarray(sigma_bid.value)
     return np.asarray(d_bid.value), sigma_bid

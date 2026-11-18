@@ -5,8 +5,8 @@ from dataclasses import replace
 import numpy as np
 
 from flexload.load import LoadType
-from flexload.realized import reserve, shed, worst
-from flexload.system import Market, named_ordcs
+from flexload.realized import shed, worst
+from flexload.system import Market, named_ordcs, reserve
 
 
 def clear(small, name):
@@ -23,14 +23,14 @@ def test_shed_is_what_reserve_does_not_cover(small):
     """Nothing trips and the load is steady: shed is the error above reserve."""
     dp = clear(small, "n-1")
     theta = LoadType(100.0, 0.0, 0.2, np.ones((1, small.T)), 0.0)
-    R = reserve(dp)
+    R = reserve(dp.r, dp.sigma, dp.d, dp.d_firm).value
     quiet = replace(small, trip=np.zeros(small.J), error=np.tile((R + 5.0)[:, None], (1, 12)))
     assert np.allclose(shed(quiet, dp, theta, np.random.default_rng(0), 3), 5.0)
 
 
 def test_the_loads_variability_adds_shed(small):
     dp = clear(small, "n-1")
-    quiet = replace(small, trip=np.zeros(small.J), error=np.tile(reserve(dp)[:, None], (1, 12)))  # reserve exactly used
+    quiet = replace(small, trip=np.zeros(small.J), error=np.tile(reserve(dp.r, dp.sigma, dp.d, dp.d_firm).value[:, None], (1, 12)))  # reserve exactly used
     steady, variable = (LoadType(100.0, 0.0, 0.2, np.ones((1, small.T)), k) for k in (0.0, 0.1))
     assert np.allclose(shed(quiet, dp, steady, np.random.default_rng(0), 50), 0.0)
     assert shed(quiet, dp, variable, np.random.default_rng(0), 50).mean() > 0.0

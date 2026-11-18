@@ -4,8 +4,8 @@ from dataclasses import replace
 
 import numpy as np
 
-from flexload.load import Belief, LoadType, S, best_response, c_sigma, fixed_point, named_types, planner
-from flexload.metrics import recovery, respond, summary, table
+from flexload.load import Belief, LoadType, best_response, c_sigma, fixed_point, named_types, planner
+from flexload.metrics import recovery, respond, summary, table, welfare
 from flexload.system import Dispatch, Market, named_ordcs
 from flexload.tariff import Marginal, Share, Tariff, named_tariffs, peak_hour
 
@@ -14,13 +14,8 @@ def posted(lam, mu, delta) -> Dispatch:
     """A dispatch with posted prices and empty pools, so the bill is λᵀd − μᵀσ."""
     T = lam.shape[0]
     z = np.zeros(T)
-    return Dispatch(d=delta, sigma=z, u=np.zeros((1, T)), r=np.zeros((1, T)), shed=z, lam=lam, mu=mu, nu=np.zeros((1, T)), C_ordc=z,
-                    C_energy=z, C_res=z, C_inv=0.0, d_bid=delta, sigma_bid=z, d_firm=delta, c_sigma=z, y=np.ones(1), curtailable=False)
-
-
-def welfare(theta, market, scenario, x) -> float:
-    """S read off a dispatch."""
-    return float(S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.C_ordc).value)
+    return Dispatch(d=delta, sigma=z, g=np.zeros((1, T)), r=np.zeros((1, T)), s=z, lam=lam, mu=mu, nu=np.zeros((1, T)), C_ordc=z,
+                    C_energy=z, C_res=z, C_inv=0.0, d_bid=delta, d_firm=delta, curtailable=False)
 
 
 def energy_only(T) -> Tariff:
@@ -107,18 +102,18 @@ def test_welfare_ordering_B0_R_B1(n1, small):
 def test_fixed_point_converges_within_one_merit_order_step(n1, small):
     theta = named_types(small.T)["mover"]
     b0 = n1.clear(small, small.delta, np.zeros(small.T), c_sigma(theta, small.delta))
-    d, sigma, dispatch, _, history = fixed_point(theta, named_tariffs(small)["tau_0"], n1, small, b0)
+    dispatch, _, history = fixed_point(theta, named_tariffs(small)["tau_0"], n1, small, b0)
     assert history[-1] < 1e-3
-    assert np.isclose(d.sum(), small.delta.sum(), atol=1e-3)
+    assert np.isclose(dispatch.d_bid.sum(), small.delta.sum(), atol=1e-3)
 
 
 def test_fixed_point_cycles_when_the_band_straddles_a_step(n1, small):
     """Hour 3 at 80 + 20 MW: the mover's band [16, 24] crosses the 100 MW base
-    unit, λ flips between 20 and 50, and the map has no fixed point (memo, RQ3b)."""
+    unit, λ flips between 20 and 50, and the map has no fixed point."""
     straddling = replace(small, d_other=small.d_other + np.array([0.0, 0.0, 0.0, 10.0]))
     theta = named_types(small.T)["mover"]
     b0 = n1.clear(straddling, straddling.delta, np.zeros(straddling.T), c_sigma(theta, straddling.delta))
-    _, _, _, _, history = fixed_point(theta, named_tariffs(straddling)["tau_0"], n1, straddling, b0, max_iter=30)
+    _, _, history = fixed_point(theta, named_tariffs(straddling)["tau_0"], n1, straddling, b0, max_iter=30)
     assert history[-1] > 1e-3
 
 
@@ -136,10 +131,11 @@ def test_summary_row(n1, small):
         row = summary(theta, named_tariffs(small)["tau_0"], n1, small)
         assert row["efficiency"] >= -1e-4 and row["tariff"] == "tau_0"
         assert row["worst_1"] < 1e-6 and row["shed_max"] >= row["shed_tail"] >= row["shed"] >= 0.0  # the requirement covers one trip
+        assert len(row["shed_draws"]) == 200 and np.isclose(np.mean(row["shed_draws"]), row["shed"])
         assert np.isclose(row["S_realized"], row["S_R"] + row["C_ordc"] - n1.c_shed * row["shed"])  # realized welfare: the ORDC's cost out, shed at c^shed in
 
 
-def test_table_and_choice(small):
+def test_table(small):
     market = Market(named_ordcs(small)["ercot"], C_inv=520_000.0)
     tariffs = named_tariffs(small)
     types = {k: v for k, v in named_types(small.T).items() if k in ("mover", "controllable")}

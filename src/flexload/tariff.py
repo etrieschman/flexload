@@ -20,7 +20,7 @@ split pool is exact either way.
 
 Slots: ``ex_ante`` reads Cᵏ from the dispatch at the load's preferred profile
 (δ, 0), the B0 dispatch ``b0``, as ERCOT procures reserve against a forecast;
-otherwise from the dispatch at the bid, ``realized``. Each layer's form sets it. ``credit`` pays a load that sells reserve μᵀσ.
+otherwise from the dispatch at the bid, ``dispatch``. Each layer's form sets it. ``credit`` pays a load that sells reserve μᵀσ.
 ``exempt_curtailable`` frees a curtailable load from the reserve charge.
 
 Formulas are cvxpy expressions on numbers or variables alike; read ``.value``.
@@ -54,7 +54,7 @@ class Marginal:
 
     hours: np.ndarray
     ex_ante: bool = (
-        False  # the price is the realized one; kept so every form has the slot
+        False  # the price is always the one at the bid; kept so every form has the slot
     )
 
     def charge(self, x, x_hat, x_other, pool, price, knows_share: bool = False):
@@ -80,7 +80,7 @@ class Share:
         )  # the average rate at x̂; zero outside the layer's hours
         if not knows_share:
             return cp.sum(cp.multiply(rate, x))
-        slope = _divide(rate * x_other, x_hat + x_other)  # Cᵏ x° / (x̂ + x°)²
+        slope = self.marginal(x_hat, x_other, pool, price)  # Cᵏ x° / (x̂ + x°)²
         return np.sum(rate * x_hat) + cp.sum(cp.multiply(slope, x - x_hat))
 
     def marginal(self, x, x_other, pool, price):
@@ -133,17 +133,17 @@ class Tariff:
     exempt_curtailable: bool = False
     name: str = ""
 
-    def _layers(self, realized: Dispatch, b0: Dispatch) -> list:
+    def _layers(self, dispatch: Dispatch, b0: Dispatch) -> list:
         """The billed layers as (name, form, pool, price). The pool is hourly
-        and comes from ``b0`` if the form is ex ante, else from ``realized``;
-        the price is always the realized one."""
-        energy = b0 if self.energy.ex_ante else realized
-        reserve = b0 if self.reserve.ex_ante else realized
-        investment = b0 if self.investment.ex_ante else realized
+        and comes from ``b0`` if the form is ex ante, else from ``dispatch``;
+        the price is always the one at the bid."""
+        energy = b0 if self.energy.ex_ante else dispatch
+        reserve = b0 if self.reserve.ex_ante else dispatch
+        investment = b0 if self.investment.ex_ante else dispatch
         hours = self.investment.hours
         return [
-            ("energy", self.energy, energy.C_energy, realized.lam),
-            ("reserve", self.reserve, reserve.C_res, realized.mu),
+            ("energy", self.energy, energy.C_energy, dispatch.lam),
+            ("reserve", self.reserve, reserve.C_res, dispatch.mu),
             ("investment", self.investment, investment.C_inv * hours / hours.sum(), np.ones(hours.shape)),
         ]
 
@@ -151,22 +151,22 @@ class Tariff:
         self,
         d,
         sigma,
-        realized: Dispatch,
+        dispatch: Dispatch,
         d_other: np.ndarray,
         b0: Dispatch | None = None,
         d_hat=None,
         knows_share: bool = False,
     ) -> dict:
         """B = Σ_k Bᵏ, the reserve payment as a negative layer, as cvxpy expressions.
-        ``realized`` is the dispatch at the bid and prices energy and the credit;
+        ``dispatch`` is the dispatch at the bid and prices energy and the credit;
         ``b0`` is the dispatch at (δ, 0), the source of ex-ante pools, fixed under
-        every belief. Inside a price-taker's objective ``realized`` is its belief,
+        every belief. Inside a price-taker's objective ``dispatch`` is its belief,
         ``d_hat`` (x̂) is required, and ``knows_share`` says whether it knows its
         own share (``Share.charge``). The bill is the load's: everyone else's is
         the same call with d and d° swapped, σ = 0 (so no credit) and the tariff
         without the curtailable exemption, ``settle(own=False)``."""
         b0 = (
-            realized if b0 is None else b0
+            dispatch if b0 is None else b0
         )  # one dispatch given: the load's belief plays both roles
         if d_hat is None:
             if isinstance(d, cp.Expression):
@@ -175,36 +175,36 @@ class Tariff:
                 )
             d_hat = np.asarray(d, float)
         out = {k: cp.Constant(0.0) for k in LAYERS}
-        for k, form, pool, price in self._layers(realized, b0):
+        for k, form, pool, price in self._layers(dispatch, b0):
             x, x_hat, x_other = (
                 cp.multiply(form.hours, d),
                 form.hours * d_hat,
                 form.hours * d_other,
             )
             out[k] = form.charge(x, x_hat, x_other, pool, price, knows_share)
-        if self.exempt_curtailable and realized.curtailable:
+        if self.exempt_curtailable and dispatch.curtailable:
             out["reserve"] = cp.Constant(0.0)
         out["credit"] = (
-            -cp.sum(cp.multiply(realized.mu, sigma)) if self.credit else cp.Constant(0.0)
+            -cp.sum(cp.multiply(dispatch.mu, sigma)) if self.credit else cp.Constant(0.0)
         )
         return out
 
     def marginal(
         self,
         d: np.ndarray,
-        realized: Dispatch,
+        dispatch: Dispatch,
         d_other: np.ndarray,
         b0: Dispatch | None = None,
     ) -> dict[str, np.ndarray]:
         """∂Bᵏ/∂d_t per layer at settlement, for the alignment metric."""
-        b0 = realized if b0 is None else b0
+        b0 = dispatch if b0 is None else b0
         out = {k: np.zeros_like(d) for k in LAYERS}
-        for k, form, pool, price in self._layers(realized, b0):
+        for k, form, pool, price in self._layers(dispatch, b0):
             out[k] = (
                 form.marginal(form.hours * d, form.hours * d_other, pool, price)
                 * form.hours
             )
-        if self.exempt_curtailable and realized.curtailable:
+        if self.exempt_curtailable and dispatch.curtailable:
             out["reserve"] = np.zeros_like(d)
         out["credit"] = np.zeros_like(d)
         return out

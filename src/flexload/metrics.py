@@ -1,10 +1,9 @@
 """Settlement, welfare, the outcomes, and the loop that fills the operator's
-table, one row per (type, tariff, market, window). Report §1 "Outcomes" and
-§3 "System operator". The operator's rule over the table is not built
-(deleted 2026-10-23; git 22257a4 has the last version).
+table, one row per (type, tariff, construct, window).
 
-Outcomes: welfare S at B0, B1 and R; efficiency S^B1 − S^R; and per layer,
-alignment Δᵏ_t, recovery ρᵏ, fairness.
+Outcomes: welfare S at B0, B1 and R; efficiency S^B1 − S^R; per layer,
+alignment Δᵏ_t, recovery ρᵏ and fairness; and, once the imbalance realizes,
+load shed and realized welfare (``realized.outcomes``).
 """
 
 from __future__ import annotations
@@ -17,8 +16,8 @@ import numpy as np
 import polars as pl
 
 from .load import Belief, LoadType, S, best_response, c_sigma, fixed_point, planner
-from .realized import reserve, shed, worst
-from .system import Dispatch, Market, Scenario
+from .realized import outcomes
+from .system import Dispatch, Market, Scenario, marginal_cost, rent
 from .tariff import LAYERS, Tariff
 
 
@@ -28,60 +27,52 @@ from .tariff import LAYERS, Tariff
 def settle(
     tariff: Tariff,
     scenario: Scenario,
-    realized: Dispatch,
+    dispatch: Dispatch,
     b0: Dispatch,
     own: bool = True,
 ) -> dict[str, float]:
-    """The bill in dollars, by layer plus the credit. ``realized`` is the
+    """The bill in dollars, by layer plus the credit. ``dispatch`` is the
     dispatch at the bid, ``b0`` the one at (δ, 0). ``own=False`` bills everyone
     else as one load: d and d° swapped, σ = 0 so the credit is zero, and the
     tariff without the curtailable exemption, which is the load's alone."""
     if own:
-        bill = tariff.bill(realized.d, realized.sigma, realized, scenario.d_other, b0)
+        bill = tariff.bill(dispatch.d, dispatch.sigma, dispatch, scenario.d_other, b0)
     else:
         others = replace(tariff, exempt_curtailable=False)
-        bill = others.bill(scenario.d_other, np.zeros(scenario.T), realized, realized.d, b0)
+        bill = others.bill(scenario.d_other, np.zeros(scenario.T), dispatch, dispatch.d, b0)
     return {k: float(v.value) for k, v in bill.items()}
 
 
 # ----------------------------------------------------------------------------
-# outcomes per layer (welfare and efficiency are in ``summary``)
+# outcomes at dispatch
 # ----------------------------------------------------------------------------
+def welfare(theta: LoadType, market: Market, scenario: Scenario, dispatch: Dispatch) -> float:
+    """S read off a dispatch, in dollars."""
+    return float(S(theta, market, scenario, dispatch.d, dispatch.sigma, dispatch.g, dispatch.r, dispatch.s, dispatch.C_ordc).value)
+
+
 def recovery(
-    tariff: Tariff, scenario: Scenario, realized: Dispatch, b0: Dispatch
+    tariff: Tariff, scenario: Scenario, dispatch: Dispatch, b0: Dispatch
 ) -> dict[str, float]:
-    """ρᵏ = Cᵏ − Bᵏ(d, σ) − Bᵏ(d°, 0): the layer's realized cost less what the
+    """ρᵏ = Cᵏ − Bᵏ(d, σ) − Bᵏ(d°, 0): the layer's cost at the bid less what the
     load and everyone else pay for it. Zero for energy at the margin."""
     own, others = (
-        settle(tariff, scenario, realized, b0, own=True),
-        settle(tariff, scenario, realized, b0, own=False),
+        settle(tariff, scenario, dispatch, b0, own=True),
+        settle(tariff, scenario, dispatch, b0, own=False),
     )
     cost = {
-        "energy": float(realized.C_energy.sum()),
-        "reserve": float(realized.C_res.sum()),
-        "investment": realized.C_inv,
+        "energy": float(dispatch.C_energy.sum()),
+        "reserve": float(dispatch.C_res.sum()),
+        "investment": dispatch.C_inv,
     }
     return {k: cost[k] - own[k] - others[k] for k in LAYERS}
 
 
-def rent(scenario: Scenario, dispatch: Dispatch) -> float:
-    """The fleet's rent over the window: its profit, revenue above fuel and
-    reserve offers, Σ_jt (λ_t − cᵘ_j) u_jt + (μ_t − cʳ_j) r_jt. Equal to Σ ν ū
-    under ERCOT; under PJM the reserve row's dual also sits in the binding
-    unit's margin. What Cⁱⁿᵛ nets out of investment cost over the year. In $."""
-    return float(
-        np.sum((dispatch.lam - scenario.cost_gen[:, None]) * dispatch.u)
-        + np.sum((dispatch.mu - scenario.cost_res[:, None]) * dispatch.r)
-    )
-
-
-def alignment(
-    tariff: Tariff, market: Market, scenario: Scenario, realized: Dispatch, b0: Dispatch
-) -> pl.DataFrame:
+def alignment(tariff: Tariff, scenario: Scenario, dispatch: Dispatch, b0: Dispatch) -> pl.DataFrame:
     """Δᵏ_t = ∂Bᵏ/∂d_t − ∂Cᵏ_sys/∂d_t, one row per hour and layer."""
     charge, cost = (
-        tariff.marginal(realized.d, realized, scenario.d_other, b0),
-        market.marginal_cost(realized),
+        tariff.marginal(dispatch.d, dispatch, scenario.d_other, b0),
+        marginal_cost(dispatch),
     )
     rows = [
         (t, k, float(charge[k][t]), float(cost[k][t]))
@@ -96,6 +87,22 @@ def alignment(
     )
 
 
+def alignment_summary(wedge: pl.DataFrame) -> dict:
+    """Δᵏ_t by layer, signed, over the hours where the layer's marginal charge
+    or marginal cost is nonzero: their count, mean, 1st and 99th percentiles.
+    None when no hour has a wedge."""
+    out = {}
+    for k in LAYERS:
+        layer = wedge.filter(pl.col("layer") == k)
+        priced = (layer["marginal_charge"].abs() > 1e-6) | (layer["marginal_cost"].abs() > 1e-6)
+        hours = layer.filter(priced)["wedge"].to_numpy()  # where the layer charges or costs anything
+        out[f"alignment_hours_{k}"] = int(hours.size)
+        out[f"alignment_{k}"] = float(hours.mean()) if hours.size else None
+        out[f"alignment_p1_{k}"] = float(np.percentile(hours, 1)) if hours.size else None
+        out[f"alignment_p99_{k}"] = float(np.percentile(hours, 99)) if hours.size else None
+    return out
+
+
 def fairness(
     tariff: Tariff,
     scenario: Scenario,
@@ -103,9 +110,7 @@ def fairness(
     b0: Dispatch,
 ) -> dict[str, float]:
     """Bᵏ(d°)|R − Bᵏ(d°)|B0: how everyone else's bill moves when the load
-    responds, against the bill before it did. Positive: others pay more.
-    (Erich, 2026-10-23: against B0, not B1; the planner never holds the
-    flexibility, and R against B1 is efficiency.)"""
+    responds, against the bill before it did. Positive: others pay more."""
     at_r = settle(tariff, scenario, responding, b0, own=False)
     at_b0 = settle(tariff, scenario, b0, b0, own=False)
     return {k: at_r[k] - at_b0[k] for k in LAYERS}
@@ -119,28 +124,22 @@ def respond(
     tariff: Tariff,
     market: Market,
     scenario: Scenario,
-    belief: str = "exogenous",
+    consistent: bool = False,
 ) -> tuple[Dispatch, Dispatch, Dispatch, list[float]]:
-    """R: the load's response under its belief about prices, ``"exogenous"``
-    (the clearing at (δ, 0), the posted rate, consumption as bid) or
-    ``"consistent"`` (the fixed point, knowing its share, cut to dᶠⁱʳᵐ where
-    the last clearing cut it). Returns the dispatch at the response, b0, the
-    belief the bid answered to, and the fixed point's bid changes (empty when
+    """R: the load's response as an exogenous price-taker (the clearing at
+    (δ, 0), the posted rate, consumption as bid) or, if ``consistent``, as the
+    consistent one (the fixed point, knowing its share, cut to dᶠⁱʳᵐ where the
+    last clearing cut it). Returns the dispatch at the response, b0, the
+    dispatch the bid answered to, and the fixed point's bid changes (empty when
     exogenous)."""
     delta, T = scenario.delta, scenario.T
     offer, d_firm = c_sigma(theta, delta), theta.d_firm(delta)
     b0 = market.clear(scenario, delta, np.zeros(T), offer, d_firm)
-    history: list[float] = []
-    if belief == "exogenous":
-        d_bid, sigma_bid = best_response(
-            theta, tariff, scenario, Belief(b0, consistent=False), b0
-        )
-        dispatch, believed = market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0
-    elif belief == "consistent":
-        _, _, dispatch, believed, history = fixed_point(theta, tariff, market, scenario, b0)
-    else:
-        raise ValueError(belief)
-    return dispatch, b0, believed, history
+    if consistent:
+        dispatch, believed, history = fixed_point(theta, tariff, market, scenario, b0)
+        return dispatch, b0, believed, history
+    d_bid, sigma_bid = best_response(theta, tariff, scenario, Belief(b0, consistent=False), b0, solver=market.solver)
+    return market.clear(scenario, d_bid, sigma_bid, offer, d_firm), b0, b0, []
 
 
 def summary(
@@ -148,73 +147,41 @@ def summary(
     tariff: Tariff,
     market: Market,
     scenario: Scenario,
-    belief: str = "exogenous",
-    b1: tuple | None = None,
+    consistent: bool = False,
+    bid_b1: tuple | None = None,
     draws: int = 200,
 ) -> dict:
-    """One row: welfare at B0, B1 and R, efficiency and its share of the value
-    of flexibility, the bill by layer at B0, R and B1, Δᵏ_t at R, signed, over
-    the hours where the layer's marginal charge or marginal cost is nonzero
-    (Erich, 2026-10-24; with reserve offers that is every hour on reserve, and
-    t* on investment): their count, mean, 1st and 99th percentiles, recovery at R and B1, fairness (others' bill, R − B0), the fleet's capacity rent at B0, R and B1, the
+    """One row. At dispatch: welfare at B0, B1 and R, efficiency and its share
+    of the value of flexibility, the bill by layer at B0, R and B1, alignment
+    at R, recovery at R and B1, fairness, the fleet's rent at B0, R and B1, the
     belief's price error, and the fixed point's iterations and last change.
-    Then what the construct costs and what it covers, at B0 and at R: the
-    reserve pool C^res, the ORDC's cost C^ORDC, the lowest reserve held, load shed
-    over ``draws`` draws
-    of realized dispatch (the window's MWh: its mean, the mean of the worst
-    5% of draws, since shed is rare and a percentile is often zero, and the
-    worst draw; the seed is the window's start, so every construct and type
-    sees the same draws), realized welfare (``S_realized``: S with the ORDC's
-    cost replaced by the mean shed at c^shed, so it compares constructs), and
-    the worst hour's shed if the largest one or two thermal units trip. ``hours_at_bound`` counts the hours where the bid sits at the
-    tolerance β δ_t, where the bid does not depend on V.
-    ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if already solved.
-    S is read from a clearing at each of the three bids."""
-    dispatch, b0, believed, history = respond(theta, tariff, market, scenario, belief)
-    d1, s1 = planner(theta, market, scenario) if b1 is None else b1
+    After the imbalance realizes, at B0 and at R: ``realized.outcomes``, and
+    realized welfare ``S_realized``, which is S with the ORDC's cost replaced
+    by the mean shed at c^shed, so it compares constructs.
+    ``hours_at_bound`` counts the hours where the bid sits at the tolerance
+    β δ_t, where the bid does not depend on V. ``bid_b1`` is the bid
+    ``(d_bid, σ_bid)`` from ``planner`` if already solved."""
+    dispatch, b0, believed, history = respond(theta, tariff, market, scenario, consistent)
+    d1, s1 = planner(theta, market, scenario) if bid_b1 is None else bid_b1
     planned = market.clear(
         scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta)
     )
     bill, bill_b0, bill_b1 = (settle(tariff, scenario, x, b0) for x in (dispatch, b0, planned))
     rho, rho_b1 = (recovery(tariff, scenario, x, b0) for x in (dispatch, planned))
     fair = fairness(tariff, scenario, dispatch, b0)
-    wedge = alignment(tariff, market, scenario, dispatch, b0)
-    align = {}
-    for k in LAYERS:
-        layer = wedge.filter(pl.col("layer") == k)
-        priced = (layer["marginal_charge"].abs() > 1e-6) | (layer["marginal_cost"].abs() > 1e-6)
-        hours = layer.filter(priced)["wedge"].to_numpy()  # where the layer charges or costs anything
-        align[f"alignment_hours_{k}"] = int(hours.size)
-        align[f"alignment_{k}"] = float(hours.mean()) if hours.size else None
-        align[f"alignment_p1_{k}"] = float(np.percentile(hours, 1)) if hours.size else None
-        align[f"alignment_p99_{k}"] = float(np.percentile(hours, 99)) if hours.size else None
-    S_B0, S_R, S_B1 = (
-        float(
-            S(theta, market, scenario, x.d, x.sigma, x.u, x.r, x.shed, x.y, x.C_ordc).value
-        )
-        for x in (b0, dispatch, planned)
-    )
+    S_B0, S_R, S_B1 = (welfare(theta, market, scenario, x) for x in (b0, dispatch, planned))
     value = S_B1 - S_B0
-    realized = {}
+    after = {}
     for at, x, S_hat in (("_b0", b0, S_B0), ("", dispatch, S_R)):
-        mwh = shed(scenario, x, theta, np.random.default_rng(scenario.start), draws).sum(axis=1)
-        realized |= {
-            f"reserve_cost{at}": float(x.C_res.sum()),
-            f"C_ordc{at}": float(x.C_ordc.sum()),
-            f"reserve_min{at}": float(reserve(x).min()),
-            f"shed{at}": float(mwh.mean()),
-            f"shed_tail{at}": float(np.sort(mwh)[-max(draws // 20, 1):].mean()),
-            f"shed_max{at}": float(mwh.max()),
-            f"S_realized{at}": S_hat + float(x.C_ordc.sum()) - market.c_shed * float(mwh.mean()),
-            f"worst_1{at}": float(worst(scenario, x, 1).max()),
-            f"worst_2{at}": float(worst(scenario, x, 2).max()),
-        }
+        out = outcomes(scenario, x, theta, draws)
+        out["S_realized"] = S_hat + out["C_ordc"] - market.c_shed * out["shed"]
+        after |= {f"{k}{at}": v for k, v in out.items()}
     at_bound = np.isclose(np.abs(dispatch.d_bid - scenario.delta), theta.beta * scenario.delta, atol=1e-4)
     return {
         "tariff": tariff.name,
         "type": theta.name,
-        "market": market.ordc.name,
-        "belief": belief,
+        "construct": market.ordc.name,
+        "consistent": consistent,
         "start": scenario.start,
         "S_B0": S_B0,
         "S_B1": S_B1,
@@ -225,16 +192,17 @@ def summary(
         **{f"bill_{k}": v for k, v in bill.items()},
         "bill_total": sum(bill.values()),
         **{f"bill_b0_{k}": v for k, v in bill_b0.items()},
+        "bill_b0_total": sum(bill_b0.values()),
         **{f"bill_b1_{k}": v for k, v in bill_b1.items()},
         "bill_b1_total": sum(bill_b1.values()),
-        **align,
+        **alignment_summary(alignment(tariff, scenario, dispatch, b0)),
         **{f"recovery_{k}": v for k, v in rho.items()},
         **{f"recovery_b1_{k}": v for k, v in rho_b1.items()},
         **{f"fairness_{k}": v for k, v in fair.items()},
         "rent_b0": rent(scenario, b0),
         "rent": rent(scenario, dispatch),
         "rent_b1": rent(scenario, planned),
-        **realized,
+        **after,
         "hours_at_bound": int(at_bound.sum()) if theta.beta > 0 else 0,
         "price_error": float(np.abs(believed.lam - dispatch.lam).mean()),
         "iterations": len(history) or None,
@@ -247,14 +215,14 @@ def table(
     tariffs: dict[str, Tariff],
     markets: list[Market],
     scenarios: list[Scenario],
-    belief: str = "exogenous",
+    consistent: bool = False,
 ) -> pl.DataFrame:
-    """The operator's table: one row per (type, tariff, market, window). B1 is solved once per (type, market, window)."""
+    """The operator's table: one row per (type, tariff, construct, window). B1 is solved once per (type, construct, window)."""
     rows = []
     for theta, market, scenario in product(types.values(), markets, scenarios):
-        b1 = planner(theta, market, scenario)
+        bid_b1 = planner(theta, market, scenario)
         rows += [
-            summary(theta, tariff, market, scenario, belief, b1)
+            summary(theta, tariff, market, scenario, consistent, bid_b1)
             for tariff in tariffs.values()
         ]
     return pl.DataFrame(rows)

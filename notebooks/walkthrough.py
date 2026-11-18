@@ -38,7 +38,7 @@ T = 168  # hours per operating window: one week
 WEEK = 29  # the window shown: late July, the week with the year's tightest hour
 ALPHA = 0.1  # the load's size, its share of system load
 RESERVE_MARGIN = 0.06  # spare capacity at the year's tightest hour (the default)
-RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵘⱼ; RTS-GMLC does not give reserve offers
+RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵍⱼ; RTS-GMLC does not give reserve offers
 RESERVE = "ercot"  # the construct: "ercot" (a curve), "pjm" (two steps) or "n-1" (a hard requirement)
 WORKLOAD = "training"  # or "inference": what the data center runs, which sets (psi, chi, beta, A, kappa)
 TYPE = "mover"  # inflexible, mover, controllable, emergency, curtailable
@@ -48,7 +48,7 @@ print(f"RTS-GMLC git ref:\t{rts.REF[:8]}")
 # %%
 # Step 1. Build the environment and the operator's action. `windows` cuts the
 # year into T-hour windows and scales load so the year's tightest hour has the
-# reserve margin. `Market` is PJM or ERCOT; `C_inv` is the annual cost of the
+# reserve margin. `Market` holds the reserve construct; `C_inv` is the annual cost of the
 # investment layer from a B0 run over the year (cached). `named_tariffs` gives
 # today's tariff; `named_types` gives the load type; `c_sigma` its offer price;
 # `d_firm` its firm level (None unless curtailable).
@@ -62,7 +62,7 @@ tau = fl.named_tariffs(scenario)["tau_0"]  # today's tariff, the same under ever
 theta = fl.named_types(T, WORKLOAD)[TYPE]
 offer = fl.c_sigma(theta, scenario.delta)
 d_firm = theta.d_firm(scenario.delta)
-edges, prices = market.curve()  # the ORDC as steps: MW of reserve above the contingency, and the price below each edge
+edges, prices = fl.steps(market.ordc, market.c_shed)  # the ORDC as steps: MW of reserve above the contingency, and the price below each edge
 steps = list(zip(edges.round().tolist(), prices.round().tolist()))
 print(f"setup time [s]:\t{time.time() - t0:.0f}")
 print(f"hours in the window T:\t{scenario.T}")
@@ -72,7 +72,7 @@ print(f"peak system load [MW]:\t{scenario.d_sys.max():,.0f}")
 delta_range = f"{scenario.delta.min():,.0f}-{scenario.delta.max():,.0f}"
 print(f"load's preferred profile delta, min-max [MW]:\t{delta_range}")
 print(f"this window's tightest-hour margin [fraction]:\t{fl.margin(scenario):.3f}")
-print(f"ex-ante peak hour t* [hour of window]:\t{scenario.peak}")
+print(f"ex-ante peak hour t* [hour of window]:\t{int(np.argmax(scenario.d_sys))}")
 print(f"annual investment-layer cost C_inv [M$]:\t{market.C_inv / 1e6:,.1f}")
 print(f"this window's share of C_inv [M$]:\t{market.C_inv * T / 8760 / 1e6:,.2f}")
 print(f"within-hour net-load error, normal fit (m, v) [MW]:\t{scenario.error_fit.m:,.0f}, {scenario.error_fit.v:,.0f}")
@@ -103,17 +103,17 @@ print(f"hours moved most [hour of window]:\t{np.argsort(-shift)[:8]}")
 
 # %%
 # Step 4. Dispatch clears at the bid: what the load consumed and what cleared,
-# the prices, the cost of each layer. The gap between the believed and realized
-# energy price is the belief's error.
+# the prices, the cost of each layer. The gap between the believed energy price
+# and the one at the bid is the belief's error.
 print("\n4. Dispatch clears")
 dispatch = market.clear(scenario, d_bid, sigma_bid, offer, d_firm)
 print(f"energy bid [MWh]:\t{d_bid.sum():,.0f}")
 print(f"energy served [MWh]:\t{dispatch.d.sum():,.0f}")
 price_error = np.abs(b0.lam - dispatch.lam).mean()
-print(f"mean |believed - realized lambda| [$/MWh]:\t{price_error:.1f}")
+print(f"mean |believed lambda - lambda at the bid| [$/MWh]:\t{price_error:.1f}")
 
 # %%
-# Step 5. Settle the bill at the realized dispatch, for the load at B0 and at R,
+# Step 5. Settle the bill at the dispatch, for the load at B0 and at R,
 # then the alignment wedge (marginal charge less marginal system cost) by layer.
 print("\n5. The bill settles; the metrics are calculated")
 bill_b0 = fl.settle(tau, scenario, b0, b0)
@@ -122,7 +122,7 @@ bills = {"layer": list(bill_b0)}
 bills["B0 [$]"], bills["R [$]"] = list(bill_b0.values()), list(bill_r.values())
 print("bill by layer at B0 and at R:")
 print(pl.DataFrame(bills))
-align = fl.alignment(tau, market, scenario, dispatch, b0)
+align = fl.alignment(tau, scenario, dispatch, b0)
 print("mean |alignment wedge| by layer [$/MWh]:")
 print(align.group_by("layer").agg(pl.col("wedge").abs().mean().alias("mean_abs_wedge")))
 
@@ -134,7 +134,7 @@ print("\nBenchmarks: B0 is step 2; B1 is the planner")
 t0 = time.time()
 d_b1, sigma_b1 = fl.planner(theta, market, scenario)
 print(f"planner time [s]:\t{time.time() - t0:.1f}")
-row = fl.summary(theta, tau, market, scenario, b1=(d_b1, sigma_b1))
+row = fl.summary(theta, tau, market, scenario, bid_b1=(d_b1, sigma_b1))
 for k in ("S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility", "bill_total"):
     print(f"{k} [$]:\t{row[k]:,.0f}")
 
@@ -144,39 +144,12 @@ for k in ("S_B0", "S_B1", "S_R", "efficiency", "value_of_flexibility", "bill_tot
 # Harmonic damping averages out the cycle a step merit order can produce.
 print("\nThe consistent price-taker: steps 2-4 iterated to a fixed point")
 t0 = time.time()
-fp = fl.fixed_point(theta, tau, market, scenario, b0, max_iter=20, damping=None)
-d_c, s_c, dispatch_c, believed, history = fp
+dispatch_c, believed, history = fl.fixed_point(theta, tau, market, scenario, b0, max_iter=20, damping=None)
 print(f"rounds [count]:\t{len(history)}")
 print(f"fixed-point time [s]:\t{time.time() - t0:.0f}")
 print(f"last change in the bid [MW]:\t{history[-1]:.2f}")
-S_R = float(
-    fl.S(
-        theta,
-        market,
-        scenario,
-        dispatch.d,
-        dispatch.sigma,
-        dispatch.u,
-        dispatch.r,
-        dispatch.shed,
-        dispatch.y,
-        dispatch.C_ordc,
-    ).value
-)
-S_R_c = float(
-    fl.S(
-        theta,
-        market,
-        scenario,
-        dispatch_c.d,
-        dispatch_c.sigma,
-        dispatch_c.u,
-        dispatch_c.r,
-        dispatch_c.shed,
-        dispatch_c.y,
-        dispatch_c.C_ordc,
-    ).value
-)
+S_R = fl.welfare(theta, market, scenario, dispatch)
+S_R_c = fl.welfare(theta, market, scenario, dispatch_c)
 print(f"welfare at R, exogenous belief [$]:\t{S_R:,.0f}")
 print(f"welfare at R, consistent belief [$]:\t{S_R_c:,.0f}")
 print(f"welfare at B1 [$]:\t{row['S_B1']:,.0f}")

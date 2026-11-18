@@ -1,49 +1,54 @@
 # Assumptions
 
 Each line is one modeling assumption, then the gap with reality and what would close it.
-Code decisions are in the code and its history. Values marked placeholder are not calibrated.
+Values marked placeholder are not calibrated. The report's appendix table sets the same assumptions beside what ERCOT and PJM do, with sources.
 
 ## The system
 
 - **One node.** Real reserve is deliverable or not by location, and prices differ by node; closing this needs the network and a reserve requirement per zone.
-- **Hourly dispatch on the hour's mean of the real-time series stands for the real-time market.** Real-time markets clear every five minutes on a forecast, not on what the hour turned out to be; closing this needs five-minute dispatch with a forecast.
-- **Every unit is online and available in every hour, with linear costs.** Real reserve comes from committed units within their ramp limits, and units are out for maintenance and forced outages; closing this needs unit commitment and an outage schedule.
-- **Load is scaled so the year's tightest hour has a 6% margin, where ERCOT's rent pays the fleet.** Real margins come from entry and exit and are quoted on installed capacity, before outages; closing this needs a long-run model.
-- **Dispatch does not model outages.** A real fleet has several percent of its capacity out at any time; closing this needs outage states that last and a dispatch that sees them.
-- **Investment costs are round numbers by category, 1,757 M$ a year (placeholder).** Closing this needs a cited cost table.
+- **One real-time market, cleared hourly on the hour's mean of RTS-GMLC's real-time series.** Both markets clear day-ahead and then every five minutes on a forecast, not on what the hour turned out to be; closing this needs five-minute dispatch with a forecast.
+- **Every unit is online and available in every hour, with linear costs.** Real reserve comes from committed units within their ramp limits, and several percent of a fleet is out at any time; closing this needs unit commitment and outage states that last.
+- **Generators offer at cost.** Real offers are set by each generator.
+- **Load is scaled by one factor so the year's tightest hour has a 6% margin, where the ERCOT construct's rent pays the fleet.** Real margins come from entry and exit and are quoted on installed capacity, before outages; closing this needs a long-run model.
+- **Fixed costs are round numbers by technology, 1,757 M$ a year (placeholder).** Closing this needs a cited cost table. The margin above has to be retuned when they change.
 - **Reserve offers are 10% of a unit's fuel cost, and wind, solar and hydro do not offer reserve (placeholder).** RTS-GMLC does not give reserve offers, and hydro does provide reserve; closing this needs offer data.
-- **Other load is inelastic and is shed at 5,000 $/MWh.** Real load has some response below the cap, and the value of lost load varies by customer.
-- **Storage, synchronous condensers and concentrated solar are left out.** Storage is a large source of reserve in ERCOT today.
+- **Other load is inelastic and is shed at 5,000 $/MWh, ERCOT's offer cap, under every construct.** Real load has some response below the cap, the value of lost load varies by customer, and PJM caps prices below ERCOT's cap.
+- **Storage, synchronous condensers and concentrated solar are left out.** Storage offers reserve in ERCOT today.
 
 ## The reserve construct
 
-- **One reserve product.** ERCOT and PJM each buy several (regulation, spinning, non-spinning, 30-minute); ERCOT splits one aggregate curve across them.
-- **A contingency is a thermal unit: 400 MW, the largest. Both markets hold their top price up to twice that.** PJM's primary reserve is 1.95 times its largest online contingency, with a 3,000 MW floor and a 30-minute product above it; ERCOT's Board sets 3,000 MW, 2.2 times its 1,375 MW unit. Our largest unit is 4% of peak where theirs are 1 to 1.6%, so both hold more reserve against load here than in practice.
-- **ERCOT's error is one normal for the year, fit to within-hour net-load error (sd 132 MW, 1.3% of peak), its mean shifted up by half a standard deviation.** ERCOT fits 24 normals by season and hour block to hour-ahead reserve error (summer 2023: mean 861 MW, sd 1,289 MW, about 1.5% of peak) and applies the same shift; closing this needs the fit by block and its mean.
-- **The error is each five-minute net-load value less its hour's mean.** The operator does not know the hour's mean in advance, so the real error also has a forecast miss; closing this needs a forecast model or published hour-ahead data.
-- **ERCOT's penalty price is the value of lost load less the fleet's highest fuel cost ($179).** ERCOT uses the value of lost load less the energy price in each interval; the highest fuel cost stands for that price at scarcity.
-- **PJM's second step is read as an error: 48 MW with probability 0.35, at a penalty of $850.** PJM did not fit a distribution; its factors come from a 2007 event, and its second step is 190 MW, kept here as 190 over the 1,600 MW contingency in its memo.
-- **The curve is steps priced at their left edge, and a normal's tail below 2% of the penalty price is priced at zero.** The true curve is smooth; more steps close this.
+- **A construct is a model of the imbalance, a statistic of it, and a penalty price.** ERCOT's curve has this form. PJM posts two prices and does not derive them from a model; the hard requirement is a benchmark that neither market uses alone.
+- **One upward reserve product.** ERCOT buys Reg-Up, Reg-Down, RRS, ECRS and Non-Spin, each with its own curve since December 5, 2025; PJM buys regulation, synchronized, non-synchronized and 30-minute reserve, and its reserve prices add.
+- **Trips enter each model as a contingency, a loss covered as if certain: the largest thermal unit, 400 MW, which is 4% of peak load.** No construct uses trip probabilities.
+- **The ERCOT and PJM constructs both hold the penalty price up to twice the largest unit.** ERCOT's level is a fixed 3,000 MW. PJM's synchronized requirement is 130% of its largest online unit and its primary requirement 150% of that, on its 2025 slides; an earlier deck says 200% for the synchronized one.
+- **The ERCOT construct's error is one normal for the year, fit to within-hour net-load error (standard deviation 128 MW, 1.3% of peak), its mean shifted up by half a standard deviation and floored at zero.** ERCOT fit one normal per season to hour-ahead reserve error, which includes forced outages, with the same shift; before 2019 it fit six time-of-day blocks per season. That curve was retired on December 5, 2025. Closing this needs published hour-ahead error.
+- **The ERCOT construct's penalty is the value of lost load less the fleet's highest fuel cost, $179.** ERCOT used its offer cap less the energy price in each interval; the highest fuel cost stands for that price at scarcity.
+- **The PJM construct has two outcomes: the requirement, and the requirement plus a margin of 12% of the largest unit with probability 35%, at a penalty of $850.** PJM's steps are $850 on the requirement and $300 on a margin of 190 MW, more in alerts. The 35% is the ratio of the two prices; the 12% is our scaling of the margin and is not sourced.
+- **The hard requirement is the largest online thermal unit, priced at the value of lost load.** At that price dispatch sheds load before it runs short of reserve, so the curve and a constraint give the same dispatch.
+- **Each curve is steps priced at their left edge, and a normal's tail below 2% of the penalty is priced at zero.** The true curve is smooth; more steps close this.
+- **No construct's model includes the data center's variability.** That is the paper's question, and the refit in the learning section is the first step toward closing it.
 
-## The load
+## The data center
 
-- **The load's preferred profile is a fixed share of system load in every hour.** A data center's profile is flatter than system load; closing this needs a load profile.
-- **Two workloads with placeholder values: training (ψ 100, β 0.5, energy conserved over the week) and inference (χ 500, β 0.1, nothing conserved); κ 0.2 for both.** Closing this needs operator data on deferrable work and on the value of served requests.
+- **Its preferred profile is a fixed share of system load in every hour, 10%.** A data center's profile is flatter than system load; closing this needs a load profile.
+- **Two workloads (placeholder values): training (penalty ψ 100, tolerance β 0.5, energy conserved over the week) and inference (strike χ 500, β 0.1, nothing conserved).** Closing this needs operator data on deferrable work and on the value of served requests.
 - **Value is a strike on each MWh below the preferred profile plus a quadratic penalty on deviation.** Real costs of deferral depend on job length and deadlines; `hours_at_bound` in the summary shows how much of a result does not depend on this form.
-- **The load's within-hour variability is normal with sd κ d_t, independent across intervals and of the system's error (κ placeholder).** GPU load swings are correlated across a site and may follow system conditions; closing this needs telemetry.
+- **Its within-hour variability is normal with standard deviation κ d_t, independent across intervals and of the system's error; κ is 0.2 for both workloads (placeholder).** GPU load swings are correlated across a site and may follow system conditions; closing this needs telemetry. With one κ the two workloads vary by the same amount.
 - **The tolerance β is symmetric and the same in every hour.**
-- **A curtailable data center keeps (1 − β_min) of its lowest hour firm, bids at least that, and is curtailed unpaid.** Real contracts set a MW level and notice period, and the load may consume below its firm level by choice.
-- **The load takes prices as given.** A load of 5 to 20% of the system moves prices; closing this needs the price-setter.
+- **It takes prices as given.** A load of 5 to 20% of the system moves prices; closing this needs the price-setter.
+- **It is firm, buys all its energy at wholesale, and sells no reserve.** Real large loads may be curtailable in an emergency, sell reserve as controllable load, buy through a retailer, or generate on site. The code has a curtailable contract and reserve-selling types; the paper does not use them.
 
-## Realized dispatch
+## Realized imbalance
 
-- **Only reserve that cleared covers an imbalance.** In practice the five-minute energy dispatch also moves online units that were not paid as reserve, and regulation covers the fastest movement; closing this needs five-minute redispatch with ramp limits.
-- **A unit trips with probability 1/MTTF each hour, for that hour only.** A real outage lasts a day or two and the operator redispatches around it; closing this needs outages that persist and a re-clearing.
-- **The net-load error is the year's one real-time path.** One history has one set of bad days; closing this needs resampling by day.
+- **The imbalance is what tripped units take away, plus net-load error, plus the data center's variability.** Line trips, import cuts and ramps within the hour are left out.
+- **Only reserve that cleared covers an imbalance.** In practice the five-minute dispatch also moves online units that were not paid as reserve, and regulation covers the fastest movement; closing this needs five-minute redispatch with ramp limits.
+- **A thermal unit trips with probability 1/MTTF each hour, for that hour only; wind, solar and hydro do not trip.** A real outage lasts hours to days and the operator redispatches around it; closing this needs outages that persist and a re-clearing.
+- **The net-load error is each five-minute net-load value less its hour's mean, on the year's one real-time path.** The real error also has a forecast miss, and one history has one set of bad days; closing this needs a forecast model and resampling by day.
 - **Only a shortage costs.** A surplus also has a cost, in curtailment and frequency control.
-- **Wind, solar and hydro units do not trip.**
+- **A simulated year is one draw of each week, and simulated years differ only in trips and in the data center's variability.** There is one weather year, so the worst simulated year is bad luck with trips, not a bad year for weather.
 
 ## Tariff and settlement
 
-- **Today's tariff bills energy at the price, the reserve pool by load share in every hour, and the investment pool by load share on the forecast peak hour, under every construct.** PJM's capacity charge uses five peaks, and the forecast peak hour stands for them. ERCOT has no capacity charge; the reserve margin is tuned so its rent pays the fleet, which makes its pool zero and the charge nothing. ERCOT's four coincident peaks recover transmission cost, which the model leaves out.
-- **The investment pool is the fleet's cost less its rent over the year, floored at zero and spread evenly over the weeks.** PJM recovers this through a capacity auction. Under ERCOT nobody pays it: what prices leave unrecovered stays with the generators until some exit.
+- **Today's tariff, the same under every construct: energy at the price, the reserve pool by load share in every hour, and the investment pool by load share on each week's forecast peak hour.** Both markets bill energy at the price and reserve by real-time load share. PJM bills capacity on five peak hours a year. ERCOT has no capacity charge, and its four coincident peaks recover transmission cost, which the model leaves out.
+- **The reserve pool is the reserve price times reserve bought, in a forecast with the data center inflexible.** In both markets the pool is set mostly day-ahead and trued up in real time; the model has no day-ahead market, so the forecast stands in for it.
+- **The investment pool is the fleet's fixed cost less its rent over the year in that forecast, floored at zero and spread evenly over the weeks.** PJM recovers this through a capacity auction. Under the ERCOT construct rent covers the fleet at the 6% margin, so the pool is zero; what the data center's response then takes from rent stays with the generators.

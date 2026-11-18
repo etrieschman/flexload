@@ -12,7 +12,7 @@
 # | 2 | Which construct sheds less, at what reserve cost, and does the response help? | the same |
 #
 # Every construct runs with today's tariff, tau_0. Tables 1 and 2
-# sum the weeks in `WEEKS`. Rows are cached in `notebooks/tables/rows.csv`: a
+# sum the weeks in `WEEKS`. Rows are cached in `notebooks/tables/rows.parquet`: a
 # row already there is read, not recomputed. Set `REFRESH = True` after the
 # code changes. Tables go to `notebooks/tables` as .csv and as booktabs .tex
 # for `\input`; with `FLEXLOAD_OUT` set (in the environment or in `.env` at
@@ -38,14 +38,15 @@ pl.Config.set_tbl_width_chars(1000)
 # %%
 # Settings.
 T = 168
-WEEKS = (29, 34, 35, 28)  # the four tightest weeks; 29 holds the year's tightest hour
+TIGHT = (29, 34, 35, 28)  # the four tightest weeks; 29 holds the year's tightest hour
+WEEKS = TIGHT  # the weeks run; tuple(range(52)) is the year, about two seconds per row and week
 ALPHA = 0.1  # the load's size, its share of system load
 RESERVE_MARGIN = 0.06  # where ERCOT's rent pays the fleet (notebooks/tune_reserve_margin.py)
 RESERVE_OFFER = 0.1
 CONSTRUCTS = ("ercot", "pjm", "n-1")  # remove one to drop its runs
 WORKLOADS = ("training", "inference")
 CONTRACTS = {"firm": "mover"}  # the contract and the named type that carries it; add "curtailable": "curtailable" for the curtailable contract
-BELIEFS = ("exogenous",)  # add "consistent": the fixed point, about a minute per row and week
+BELIEFS = {"exogenous": False}  # the belief and whether it is the consistent one; add "consistent": True, about a minute per row and week
 DRAWS = 200  # draws of realized dispatch per window
 REFRESH = False  # True recomputes every row and the baseline year
 M = 1e6  # dollars per M$
@@ -94,7 +95,7 @@ if path.exists() and not REFRESH and set(pl.read_csv(path)["construct"]) == set(
 else:
     rows = []
     for c, mk in markets.items():
-        edges, prices = mk.curve()
+        edges, prices = fl.steps(mk.ordc, mk.c_shed)
         level = max(mk.ordc.min_contingency, mk.ordc.units.max() * largest)
         rent = reserve_cost = shed = held = 0.0
         above = {100: 0, 1000: 0}
@@ -102,8 +103,8 @@ else:
             b0 = mk.clear(w, w.delta, np.zeros(T), np.zeros(T))
             rent += fl.rent(w, b0)
             reserve_cost += float(b0.C_res.sum())
-            shed += float(b0.shed.sum())
-            held += float(fl.reserve(b0).mean())
+            shed += float(b0.s.sum())
+            held += float(fl.reserve(b0.r, b0.sigma, b0.d, b0.d_firm).value.mean())
             for price in above:
                 above[price] += int((b0.mu > price).sum())
         rent *= fl.HOURS_PER_YEAR / sum(w.T for w in weeks)
@@ -131,9 +132,9 @@ save(table_0, "table_0", digits=0)
 # The rows: one per construct, workload, contract, belief and week. Each is
 # `fl.summary`: B0, the load's response R under its belief, the planner's B1,
 # settlement, and realized dispatch over DRAWS draws.
-KEY = ["market", "workload", "contract", "belief", "start", "alpha", "margin", "draws"]
-path = tables / "rows.csv"
-cached = pl.read_csv(path) if path.exists() and not REFRESH else None
+KEY = ["construct", "workload", "contract", "belief", "start", "alpha", "margin", "draws"]
+path = tables / "rows.parquet"  # parquet: each row keeps its draws as a list
+cached = pl.read_parquet(path) if path.exists() and not REFRESH else None
 done = set(cached.select(KEY).iter_rows()) if cached is not None else set()
 new = []
 t0 = time.time()
@@ -143,71 +144,94 @@ for c, workload, (contract, kind), belief, week in product(CONSTRUCTS, WORKLOADS
     if key in done:
         continue
     theta = fl.named_types(T, workload)[kind]
-    row = fl.summary(theta, fl.named_tariffs(scenario)["tau_0"], markets[c], scenario, belief, draws=DRAWS)
-    new.append({**row, "workload": workload, "contract": contract, "alpha": ALPHA, "margin": RESERVE_MARGIN, "draws": DRAWS})
+    row = fl.summary(theta, fl.named_tariffs(scenario)["tau_0"], markets[c], scenario, BELIEFS[belief], draws=DRAWS)
+    new.append({**row, "workload": workload, "contract": contract, "belief": belief, "alpha": ALPHA, "margin": RESERVE_MARGIN, "draws": DRAWS})
     print(f"{time.time() - t0:5.0f} s\t{c}\t{workload}\t{contract}\t{belief}\tweek {week}", flush=True)
 if new:
     cached = pl.concat([x for x in (cached, pl.DataFrame(new)) if x is not None], how="diagonal_relaxed")
-    cached.write_csv(path)
+    cached.write_parquet(path)
 rows = cached.filter(
-    pl.col("market").is_in(CONSTRUCTS)
+    pl.col("construct").is_in(CONSTRUCTS)
     & pl.col("workload").is_in(WORKLOADS)
     & pl.col("contract").is_in(list(CONTRACTS))
-    & pl.col("belief").is_in(BELIEFS)
+    & pl.col("belief").is_in(list(BELIEFS))
     & pl.col("start").is_in([weeks[w].start for w in WEEKS])
     & (pl.col("alpha") == ALPHA)
     & (pl.col("margin") == RESERVE_MARGIN)
     & (pl.col("draws") == DRAWS)
 )
 print(f"rows: {rows.height} ({len(new)} computed, {rows.height - len(new)} read)")
-GROUP = ["market", "workload", "contract", "belief"]
-bill_b0 = pl.sum_horizontal("bill_b0_energy", "bill_b0_reserve", "bill_b0_investment", "bill_b0_credit")
+GROUP = ["construct", "workload", "contract", "belief"]
 others = pl.sum_horizontal("fairness_energy", "fairness_reserve", "fairness_investment")
 
 # %%
-# Table 1. What the load's flexibility is worth and where the money goes, the
-# weeks summed, in M$. Flexibility value is S^B1 − S^B0. The tariff loses
-# S^B1 − S^R, also as a share of the value. The bill changes are R less B0:
-# the load's, and everyone else's. The fleet's rent change is what generators
-# earn above fuel and reserve offers at R, less at B0.
-table_1 = rows.group_by(GROUP, maintain_order=True).agg(
-    (pl.col("value_of_flexibility").sum() / M).alias("flexibility value"),
-    (pl.col("efficiency").sum() / M).alias("tariff loses"),
-    pl.when(pl.col("value_of_flexibility").sum() > 0.005 * M)  # blank where the value rounds to zero
-    .then(100 * pl.col("efficiency").sum() / pl.col("value_of_flexibility").sum())
-    .alias("loses [%]"),
-    ((pl.col("bill_total") - bill_b0).sum() / M).alias("load's bill"),
-    (others.sum() / M).alias("others' bill"),
-    (pl.col("rent_b0").sum() / M).alias("rent at B0"),
-    ((pl.col("rent") - pl.col("rent_b0")).sum() / M).alias("rent change"),
-)
-print(f"\nTable 1: flexibility and who gets it, weeks {WEEKS} [M$]")
-save(table_1, "table_1", digits=2)
+# The two tables, for a set of weeks.
+def flexibility(rows: pl.DataFrame) -> pl.DataFrame:
+    """Table 1. What the load's flexibility is worth and where the money goes,
+    the weeks summed, in M$. Flexibility value is S^B1 − S^B0. The tariff loses
+    S^B1 − S^R, also as a share of the value. The bill changes are R less B0:
+    the load's, and everyone else's. The fleet's rent change is what generators
+    earn above fuel and reserve offers at R, less at B0."""
+    return rows.group_by(GROUP, maintain_order=True).agg(
+        (pl.col("value_of_flexibility").sum() / M).alias("flexibility value"),
+        (pl.col("efficiency").sum() / M).alias("tariff loses"),
+        pl.when(pl.col("value_of_flexibility").sum() > 0.005 * M)  # blank where the value rounds to zero
+        .then(100 * pl.col("efficiency").sum() / pl.col("value_of_flexibility").sum())
+        .alias("loses [%]"),
+        ((pl.col("bill_total") - pl.col("bill_b0_total")).sum() / M).alias("load's bill"),
+        (others.sum() / M).alias("others' bill"),
+        (pl.col("rent_b0").sum() / M).alias("rent at B0"),
+        ((pl.col("rent") - pl.col("rent_b0")).sum() / M).alias("rent change"),
+    )
+
+
+def after_dispatch(rows: pl.DataFrame) -> pl.DataFrame:
+    """Table 2. The test after dispatch, at B0 and at R, the weeks summed.
+    Reserve cost is the pool μ × reserve bought [M$]. Lowest reserve is the
+    tightest hour's [MW]. Shed is over DRAWS draws of trips and the load's own
+    variability [MWh]. A simulated run of the weeks is one draw of each week:
+    shed is summed over the weeks within a draw, then reported as its mean over
+    draws, the mean of the worst 5% of draws, and the worst draw. With every
+    week of the year a draw is a simulated year. Realized welfare is S with the
+    ORDC's cost replaced by the mean shed at c^shed, which compares constructs
+    [M$]. Two trips is the shed if the two thermal units with the most output
+    and reserve trip together, in the worst hour [MW]."""
+    by_draw = (
+        rows.select(*GROUP, "shed_draws_b0", "shed_draws")
+        .with_columns(pl.int_ranges(pl.col("shed_draws").list.len()).alias("draw"))
+        .explode("shed_draws_b0", "shed_draws", "draw")
+        .group_by(*GROUP, "draw", maintain_order=True)
+        .agg(pl.col("shed_draws_b0").sum(), pl.col("shed_draws").sum())
+    )
+    tail = max(DRAWS // 20, 1)
+    shed = by_draw.group_by(GROUP, maintain_order=True).agg(
+        pl.col("shed_draws_b0").mean().alias("shed, B0"),
+        pl.col("shed_draws").mean().alias("shed, R"),
+        pl.col("shed_draws_b0").top_k(tail).mean().alias("worst 5%, B0"),
+        pl.col("shed_draws").top_k(tail).mean().alias("worst 5%, R"),
+        pl.col("shed_draws_b0").max().alias("worst draw, B0"),
+        pl.col("shed_draws").max().alias("worst draw, R"),
+    )
+    held = rows.group_by(GROUP, maintain_order=True).agg(
+        (pl.col("reserve_cost_b0").sum() / M).alias("reserve cost, B0"),
+        (pl.col("reserve_cost").sum() / M).alias("reserve cost, R"),
+        pl.col("reserve_min_b0").min().alias("lowest reserve, B0"),
+        pl.col("reserve_min").min().alias("lowest reserve, R"),
+        (pl.col("S_realized_b0").sum() / M).alias("realized welfare, B0"),
+        (pl.col("S_realized").sum() / M).alias("realized welfare, R"),
+        pl.col("worst_2_b0").max().alias("two trips, B0"),
+        pl.col("worst_2").max().alias("two trips, R"),
+    )
+    first = [*GROUP, "reserve cost, B0", "reserve cost, R", "lowest reserve, B0", "lowest reserve, R"]
+    return held.join(shed, on=GROUP, how="left").select(*first, *shed.columns[len(GROUP):], pl.exclude(*first, *shed.columns))
+
 
 # %%
-# Table 2. The test after dispatch, at B0 and at R, the weeks summed. Reserve
-# cost is the pool μ × reserve bought [M$]. Lowest reserve is the tightest
-# hour's [MW]. Shed is over DRAWS draws of trips, the net-load error and the
-# load's own variability [MWh]: its mean, the mean of the worst 5% of draws
-# and the worst draw, each in the worst week. Realized welfare is S with the
-# ORDC's cost replaced by the mean shed at c^shed, which compares constructs
-# [M$]. Two trips is the shed if the two thermal units with the most output
-# and reserve trip together, in the worst hour [MW].
-table_2 = rows.group_by(GROUP, maintain_order=True).agg(
-    (pl.col("reserve_cost_b0").sum() / M).alias("reserve cost, B0"),
-    (pl.col("reserve_cost").sum() / M).alias("reserve cost, R"),
-    pl.col("reserve_min_b0").min().alias("lowest reserve, B0"),
-    pl.col("reserve_min").min().alias("lowest reserve, R"),
-    pl.col("shed_b0").sum().alias("shed, B0"),
-    pl.col("shed").sum().alias("shed, R"),
-    pl.col("shed_tail_b0").max().alias("worst 5%, B0"),
-    pl.col("shed_tail").max().alias("worst 5%, R"),
-    pl.col("shed_max_b0").max().alias("worst draw, B0"),
-    pl.col("shed_max").max().alias("worst draw, R"),
-    (pl.col("S_realized_b0").sum() / M).alias("realized welfare, B0"),
-    (pl.col("S_realized").sum() / M).alias("realized welfare, R"),
-    pl.col("worst_2_b0").max().alias("two trips, B0"),
-    pl.col("worst_2").max().alias("two trips, R"),
-)
-print(f"\nTable 2: the test after dispatch, weeks {WEEKS}")
-save(table_2, "table_2", digits=1)
+# The tables for the weeks run, and for the four tightest weeks when more were run.
+for suffix, some in {"": WEEKS, **({} if set(WEEKS) == set(TIGHT) else {"_tight": TIGHT})}.items():
+    part = rows.filter(pl.col("start").is_in([weeks[w].start for w in some]))
+    span = "the year" if len(some) == len(weeks) else f"weeks {some}"
+    print(f"\nTable 1: flexibility and who gets it, {span} [M$]")
+    save(flexibility(part), f"table_1{suffix}", digits=2)
+    print(f"\nTable 2: the test after dispatch, {span}")
+    save(after_dispatch(part), f"table_2{suffix}", digits=1)

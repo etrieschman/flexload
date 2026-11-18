@@ -23,6 +23,7 @@ import cvxpy as cp
 import numpy as np
 import polars as pl
 import rts_gmlc as rts
+from scipy.stats import norm
 
 HOURS_PER_YEAR = 8760
 VOLL = 5000.0  # c^VOLL, the value of lost load, $/MWh: c^shed, and c^pen where a construct prices at it
@@ -85,10 +86,10 @@ class Scenario:
 
     delta: np.ndarray  # (T,) the load's preferred consumption δ, MW
     d_other: np.ndarray  # (T,) all other load d°, MW
-    cost_gen: np.ndarray  # (J,) energy cost cᵘ, $/MWh
+    cost_gen: np.ndarray  # (J,) energy cost cᵍ, $/MWh
     cost_res: np.ndarray  # (J,) reserve cost cʳ, $/MW-h
     cost_inv: np.ndarray  # (J,) investment cost cⁱⁿᵛ, $/MW per year
-    capacity: np.ndarray  # (J, T) available capacity ū, MW
+    capacity: np.ndarray  # (J, T) available capacity ḡ, MW
     nameplate: np.ndarray  # (J,) installed capacity, MW
     unit: np.ndarray  # (J,) int, physical unit of each column
     names: tuple[str, ...] = ()
@@ -111,13 +112,8 @@ class Scenario:
         return self.delta + self.d_other
 
     @property
-    def peak(self) -> int:
-        """Hour of the window's peak on the B0 path: the ex-ante peak hour t*."""
-        return int(np.argmax(self.d_sys))
-
-    @property
     def units(self) -> np.ndarray:
-        """(U, J) membership: row u sums the columns of unit u."""
+        """(U, J) membership: row k sums the columns of unit k."""
         ids = np.unique(self.unit)
         return (ids[:, None] == self.unit[None, :]).astype(float)
 
@@ -127,13 +123,6 @@ class Scenario:
         offer reserve and do not count as a contingency: their output is a
         forecast quantity, and its error is in ε."""
         return np.array([any(tag in n.upper() for tag in ("WIND", "PV", "HYDRO")) for n in self.names], dtype=bool)
-
-    @property
-    def availability(self) -> np.ndarray:
-        """(J, T) capacity as a fraction of nameplate; the long run's capacity shape."""
-        return (
-            self.capacity / np.where(self.nameplate > 0, self.nameplate, 1.0)[:, None]
-        )
 
 
 def _year(df: pl.DataFrame) -> pl.DataFrame:
@@ -160,7 +149,7 @@ def scenario(
     notebooks/tune_reserve_margin.py), and neither market sheds load in
     dispatch there. Dispatch does not model outages: every unit is available
     in every hour, so the margin is capacity that is spare at the tightest hour. ``reserve_offer`` sets the
-    reserve offer cʳⱼ = reserve_offer × cᵘⱼ on thermal blocks, since RTS-GMLC
+    reserve offer cʳⱼ = reserve_offer × cᵍⱼ on thermal blocks, since RTS-GMLC
     does not give reserve offers; wind, solar and hydro do not offer reserve."""
     lo, hi = start, start + T
     if hi > HOURS_PER_YEAR:
@@ -174,23 +163,23 @@ def scenario(
         names, mw = _real_time(kind)
         renewable |= {uid: mw[lo:hi, :, i].mean(axis=1) for i, uid in enumerate(names)}
     cols = []  # (cost_gen, cost_res, cost_inv, capacity (T,), nameplate, unit, name, trip)
-    for u, g in enumerate(rts.gen().iter_rows(named=True)):
-        uid, cat = g["gen_uid"], g["category"]
+    for k, gen in enumerate(rts.gen().iter_rows(named=True)):
+        uid, cat = gen["gen_uid"], gen["category"]
         if cat in EXCLUDED:
             continue
         inv = INVESTMENT_COST_PER_KW_YEAR[cat] * 1000.0
         if uid in renewable:
             avail = renewable[uid]
             cols.append(
-                (float(g["vom"] or 0.0), 0.0, inv, avail, float(g["pmax_mw"]), u, uid, 0.0)  # no offer: nothing idle to hold
+                (float(gen["vom"] or 0.0), 0.0, inv, avail, float(gen["pmax_mw"]), k, uid, 0.0)  # no offer: nothing idle to hold
             )
         else:
-            trip = 1.0 / float(g["mttf_hr"])  # a failure every MTTF hours of running
+            trip = 1.0 / float(gen["mttf_hr"])  # a failure every MTTF hours of running
             for mw, cost in (
                 blocks.filter(pl.col("gen_uid") == uid).select("mw", "cost").iter_rows()
             ):
                 cols.append(
-                    (float(cost), reserve_offer * float(cost), inv, mw * np.ones(T), float(mw), u, uid, trip)
+                    (float(cost), reserve_offer * float(cost), inv, mw * np.ones(T), float(mw), k, uid, trip)
                 )
     s = Scenario(
         delta=delta,
@@ -332,8 +321,6 @@ def steps(ordc: ORDC, c_shed: float, n: int = 50) -> tuple[np.ndarray, np.ndarra
     evenly spaced in price, so its tail below 1/n of c^pen is priced at zero."""
     error, statistic = ordc.error, ordc.statistic
     if isinstance(error, Normal):
-        from scipy.stats import norm
-
         exceed = np.arange(n - 1, 0, -1) / n  # Pr[error > e_s]
         edges = error.m + error.v * norm.ppf(1.0 - exceed)
     else:
@@ -382,16 +369,16 @@ def named_ordcs(scenario: Scenario) -> dict[str, ORDC]:
 
 @dataclass(frozen=True)
 class Dispatch:
-    """What 𝓜_ω(d, σ) determined: the load's consumption d (the report's dᶜᵘʳᵗ)
-    and cleared reserve σ (σᶜˡʳ), generation, prices (λ, μ, ν), the ORDC's
-    cost C^ORDC_t, and the cost of each layer Cᵏ. The bid it answered is kept
-    as ``d_bid``, ``sigma_bid``. Shapes (T,) unless noted."""
+    """What 𝓜_ω(d, σ) determined: the load's consumption d and cleared reserve
+    σ, generation g and reserve r, the other load shed s, prices (λ, μ, ν), the
+    ORDC's cost C^ORDC_t, and the cost of each layer Cᵏ. ``d_bid`` is the bid it
+    answered. Shapes (T,) unless noted."""
 
     d: np.ndarray  # consumption served
     sigma: np.ndarray  # reserve cleared from the load's offer
-    u: np.ndarray  # (J, T) generation
+    g: np.ndarray  # (J, T) generation
     r: np.ndarray  # (J, T) generator reserve
-    shed: np.ndarray  # other load not served, at VOLL
+    s: np.ndarray  # other load shed in dispatch, at c^shed
     lam: np.ndarray  # energy price λ
     mu: np.ndarray  # reserve price μ
     nu: np.ndarray  # (J, T) capacity rent ν
@@ -400,89 +387,101 @@ class Dispatch:
     C_res: np.ndarray  # cost of the reserve layer, μ_t (Σ_j r_jt + σ_t)
     C_inv: float  # cost of the investment layer for the window: annual Cⁱⁿᵛ × T/8760
     d_bid: np.ndarray  # the load's bid
-    sigma_bid: np.ndarray  # the load's offer
     d_firm: np.ndarray  # the firm level the operator may not curtail below
-    c_sigma: np.ndarray  # the offer price c^σ
-    y: np.ndarray  # (J,) capacity: nameplate in the short run, chosen in the long run
     curtailable: bool  # the load declared a firm level, so d may sit below d_bid
-    status: str = ""
+
+
+def reserve(r, sigma, d, d_firm):
+    """(T,) reserve held, R_t = Σ_j r_jt + σ_t + (d_t − dᶠⁱʳᵐ_t): generator
+    reserve, the load's cleared offer, and its headroom above the firm level."""
+    return cp.sum(r, axis=0) + sigma + (d - d_firm)
+
+
+def rent(scenario: Scenario, dispatch: Dispatch) -> float:
+    """The fleet's rent over the window: its profit, revenue above fuel and
+    reserve offers, Σ_jt (λ_t − cᵍ_j) g_jt + (μ_t − cʳ_j) r_jt. Equal to Σ ν ḡ
+    under ERCOT; where the contingency is the largest online unit, that unit's
+    margin also carries the contingency's dual. What Cⁱⁿᵛ nets out of
+    investment cost over the year. In $."""
+    return float(
+        np.sum((dispatch.lam - scenario.cost_gen[:, None]) * dispatch.g)
+        + np.sum((dispatch.mu - scenario.cost_res[:, None]) * dispatch.r)
+    )
+
+
+def marginal_cost(dispatch: Dispatch) -> dict[str, np.ndarray]:
+    """∂C_sys/∂d_t split the way the bill is: energy λ, reserve −μ on
+    curtailable headroom and zero otherwise, investment 0. For alignment."""
+    headroom = dispatch.d_firm < dispatch.d_bid - 1e-9
+    return {
+        "energy": dispatch.lam,
+        "reserve": -(headroom * dispatch.mu),
+        "investment": np.zeros(dispatch.lam.shape),
+    }
+
+
+def solve(problem: cp.Problem, solver: str, options: dict, what: str) -> None:
+    """Solve, and raise if the program did not reach an optimum."""
+    problem.solve(solver=solver, **options)
+    if problem.status not in ("optimal", "optimal_inaccurate"):
+        raise RuntimeError(f"{what} failed: {problem.status}")
 
 
 @dataclass(frozen=True)
 class Market:
     """The environment: the reserve construct ``ordc`` and the price c^shed on
     load shed. ``C_inv`` is the annual cost of the investment layer from
-    :func:`C_inv`; the short run needs it."""
+    :func:`C_inv`; ``clear`` needs it."""
 
     ordc: ORDC
     c_shed: float = VOLL
-    long_run: bool = False
     C_inv: float | None = None
     solver: str = "GUROBI"
     solver_options: dict = field(default_factory=dict)
 
-    def curve(self) -> tuple[np.ndarray, np.ndarray]:
-        """The ORDC as steps, (edges, prices); see :func:`steps`."""
-        return steps(self.ordc, self.c_shed)
-
     # --- the objective and constraints, written once; used by clear, planner, S --
-    def C_ordc(self, scenario: Scenario, u, r, z):
+    def C_ordc(self, scenario: Scenario, g, r, z):
         """C^ORDC_t = Σ_s π_s (w_st − z_st), the expected cost of the imbalance
         that reserve does not cover; z_st is how much of step s reserve fills.
         The first step's width is the contingency plus e_1. Where the
         contingency is the largest online unit that width moves with dispatch,
         so the first step's unfilled part is written max(0, w − z): one row
         per unit, as a requirement on the largest unit is."""
-        edges, prices = self.curve()
+        edges, prices = steps(self.ordc, self.c_shed)
         M = (scenario.units * self.ordc.units[:, None])[self.ordc.units > 0]
         contingency = self.ordc.min_contingency
         if M.shape[0] > 0:
-            contingency = cp.maximum(contingency, cp.max(M @ (u + r), axis=0))
+            contingency = cp.maximum(contingency, cp.max(M @ (g + r), axis=0))
         cost = prices[0] * cp.pos(contingency + edges[0] - z[0])
         if edges.size > 1:
             cost = cost + prices[1:] @ (np.diff(edges)[:, None] - z[1:])
         return cost
 
-    def C_sys(self, scenario: Scenario, u, r, sigma, c_sigma, shed, y, C_ordc):
-        """System cost: Σ_t [Σ_j (cᵘ u + cʳ r) + c^σ σ + c^shed s + C^ORDC_t] plus
-        Σ_j cⁱⁿᵛ y in the long run. The dispatch objective is this plus the
-        load's own curtailment at c^shed, which stands in for its value."""
-        cost = cp.sum(cp.multiply(scenario.cost_gen[:, None], u)) + cp.sum(
+    def C_sys(self, scenario: Scenario, g, r, sigma, c_sigma, s, C_ordc):
+        """System cost: Σ_t [Σ_j (cᵍ g + cʳ r) + c^σ σ + c^shed s + C^ORDC_t].
+        The dispatch objective is this plus the load's own curtailment at
+        c^shed, which stands in for its value."""
+        cost = cp.sum(cp.multiply(scenario.cost_gen[:, None], g)) + cp.sum(
             cp.multiply(scenario.cost_res[:, None], r)
         )
-        cost = (
+        return (
             cost
             + cp.sum(cp.multiply(c_sigma, sigma))
-            + self.c_shed * cp.sum(shed)
+            + self.c_shed * cp.sum(s)
             + cp.sum(C_ordc)
         )
-        if self.long_run:
-            cost = cost + (scenario.cost_inv * scenario.T / HOURS_PER_YEAR) @ y
-        return cost
 
-    def constraints(
-        self, scenario: Scenario, sigma_bid, d_firm, u, r, sigma, d, y, z, shed
-    ) -> dict:
+    def constraints(self, scenario: Scenario, d, sigma, g, r, s, z, sigma_bid, d_firm) -> dict:
         """Balance (λ), capacity (ν), reserve (μ) and the load's offer, as
-        named cvxpy constraints. Reserve held is
-        R_t = Σ_j r_jt + σ_t + (d_t − dᶠⁱʳᵐ_t), and it fills the ORDC's steps:
+        named cvxpy constraints. Reserve held fills the ORDC's steps:
         R_t = Σ_s z_st."""
-        T, J = scenario.T, scenario.J
         d_sys = d + scenario.d_other
-        cons = {"balance": cp.sum(u, axis=0) + shed == d_sys}
-        if self.long_run:
-            cons["capacity"] = u + r <= cp.multiply(
-                scenario.availability,
-                cp.reshape(y, (J, 1), order="C") @ np.ones((1, T)),
-            )
-        else:
-            cons["capacity"] = u + r <= scenario.capacity
+        cons = {"balance": cp.sum(g, axis=0) + s == d_sys}
+        cons["capacity"] = g + r <= scenario.capacity
         if scenario.renewable.any():  # wind, solar and hydro do not offer reserve
             cons["renewable_reserve"] = r[np.flatnonzero(scenario.renewable), :] == 0
-        cons["reserve"] = (  # dual: the height of the step in use, μ_t
-            cp.sum(z, axis=0) == cp.sum(r, axis=0) + sigma + (d - d_firm)
-        )
-        edges = self.curve()[0]
+        cons["reserve"] = cp.sum(z, axis=0) == reserve(r, sigma, d, d_firm)  # dual: the height of the step in use, μ_t
+        edges = steps(self.ordc, self.c_shed)[0]
         if edges.size > 1:  # the first step's width is in C_ordc
             cons["steps"] = z[1:] <= np.diff(edges)[:, None]
         if isinstance(sigma, cp.Variable):
@@ -502,9 +501,11 @@ class Market:
         price c^σ and its declared firm level, and read what cleared. ``d_firm``
         is the type's level for a curtailable load, ``None`` otherwise. A
         curtailable load does not offer reserve."""
+        if self.C_inv is None:
+            raise ValueError("clear needs Market.C_inv; see C_inv(market, windows(...))")
         T, J = scenario.T, scenario.J
         d_bid = np.asarray(d_bid, float)
-        sigma_bid = np.maximum(np.asarray(sigma_bid, float), 0.0)  # a solver's −1e-10 on σ ≥ 0 is no offer
+        sigma_bid = np.broadcast_to(np.maximum(np.asarray(sigma_bid, float), 0.0), (T,))  # a solver's −1e-10 on σ ≥ 0 is no offer
         c_sigma = np.broadcast_to(np.asarray(c_sigma, float), (T,))
         curtailable = d_firm is not None
         d_firm = np.asarray(d_firm, float) if curtailable else d_bid
@@ -512,74 +513,52 @@ class Market:
             sigma_bid = np.zeros(T)
         offers = bool(np.any(sigma_bid > 0.0))
 
-        u = cp.Variable((J, T), nonneg=True)
+        g = cp.Variable((J, T), nonneg=True)
         r = cp.Variable((J, T), nonneg=True)
-        shed = cp.Variable(T, nonneg=True)
+        s = cp.Variable(T, nonneg=True)
         sigma = cp.Variable(T, nonneg=True) if offers else np.zeros(T)
         d = cp.Variable(T) if curtailable else d_bid
-        y = cp.Variable(J, nonneg=True) if self.long_run else scenario.nameplate
-        z = cp.Variable((self.curve()[1].size, T), nonneg=True)
-        C_ordc = self.C_ordc(scenario, u, r, z)
+        z = cp.Variable((steps(self.ordc, self.c_shed)[1].size, T), nonneg=True)
+        C_ordc = self.C_ordc(scenario, g, r, z)
 
-        cost = self.C_sys(scenario, u, r, sigma, c_sigma, shed, y, C_ordc)
-        cons = self.constraints(scenario, sigma_bid, d_firm, u, r, sigma, d, y, z, shed)
+        cost = self.C_sys(scenario, g, r, sigma, c_sigma, s, C_ordc)
+        cons = self.constraints(scenario, d, sigma, g, r, s, z, sigma_bid, d_firm)
         if curtailable:
             cost = cost + self.c_shed * cp.sum(d_bid - d)
             cons["curtail"] = d >= d_firm
             cons["serve"] = d <= d_bid
         problem = cp.Problem(cp.Minimize(cost), list(cons.values()))
-        problem.solve(solver=self.solver, **self.solver_options)
-        if problem.status not in ("optimal", "optimal_inaccurate"):
-            raise RuntimeError(f"clearing failed: {problem.status}")
+        solve(problem, self.solver, self.solver_options, "clearing")
 
         # cvxpy reports an equality dual as −∂cost/∂rhs. Balance has load on the right, so λ = −dual.
         # The reserve row has reserve on the right and more reserve lowers cost, so μ = +dual.
         lam = -_dual(cons["balance"])
         mu = _dual(cons["reserve"])
         d, sigma, r_ = _value(d), _value(sigma), _value(r)
-        if self.C_inv is None and not self.long_run:
-            raise ValueError(
-                "the short run needs Market.C_inv; see C_inv(market, windows(...))"
-            )
         return Dispatch(
             d=d,
             sigma=sigma,
-            u=_value(u),
+            g=_value(g),
             r=r_,
-            shed=_value(shed),
+            s=_value(s),
             lam=lam,
             mu=np.asarray(mu),
             nu=np.asarray(cons["capacity"].dual_value),
             C_ordc=_value(C_ordc),
             C_energy=lam * (d + scenario.d_other),
             C_res=mu * (r_.sum(axis=0) + sigma),
-            C_inv=0.0 if self.long_run else float(self.C_inv) * T / HOURS_PER_YEAR,
+            C_inv=float(self.C_inv) * T / HOURS_PER_YEAR,
             d_bid=d_bid,
-            sigma_bid=sigma_bid,
             d_firm=d_firm,
-            c_sigma=np.asarray(c_sigma),
-            y=_value(y),
             curtailable=curtailable,
-            status=problem.status,
         )
-
-    def marginal_cost(self, dispatch: Dispatch) -> dict[str, np.ndarray]:
-        """∂C_sys/∂d_t split the way the bill is: energy λ, reserve −μ on
-        curtailable headroom and zero otherwise, investment 0 in the short run.
-        For alignment."""
-        headroom = dispatch.d_firm < dispatch.d_bid - 1e-9
-        return {
-            "energy": dispatch.lam,
-            "reserve": -(headroom * dispatch.mu),
-            "investment": np.zeros(dispatch.lam.shape),
-        }
 
 
 def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
-    """The annual cost of the investment layer: max(0, Σ_j cⁱⁿᵛ_j ū_j − rent),
+    """The annual cost of the investment layer: max(0, Σ_j cⁱⁿᵛ_j ḡ_j − rent),
     the fleet's investment cost on nameplate less the rent it earns on the B0
     path (δ, 0), in $. The rent is the fleet's profit, revenue above fuel and
-    reserve offers (:func:`flexload.metrics.rent`), summed over the windows and
+    reserve offers (:func:`rent`), summed over the windows and
     scaled to 8760 hours. It is floored at zero: where prices already pay the
     fleet, the layer bills zero and does not credit the load. ``clear``
     prorates it to the window by T/8760. Cached
@@ -588,7 +567,7 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
     key = None
     if cache:
         h = hashlib.sha1(repr((market.ordc.min_contingency, market.c_shed, "rent as profit, 8760 h")).encode())
-        for a in (*market.curve(), market.ordc.units):
+        for a in (*steps(market.ordc, market.c_shed), market.ordc.units):
             h.update(np.ascontiguousarray(a, dtype=float).tobytes())
         for s in windows:
             for a in (
@@ -603,13 +582,11 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
         key = Path.home() / ".cache" / "flexload" / "C_inv" / f"{h.hexdigest()}.json"
         if key.exists():
             return max(float(json.loads(key.read_text())["annual"]), 0.0)
-    m = replace(market, long_run=False, C_inv=0.0)
+    m = replace(market, C_inv=0.0)
     by_window = []  # the fleet's rent in each window
     for s in windows:
         b0 = m.clear(s, s.delta, np.zeros(s.T), np.zeros(s.T))
-        by_window.append(
-            float(np.sum((b0.lam - s.cost_gen[:, None]) * b0.u + (b0.mu - s.cost_res[:, None]) * b0.r))
-        )
+        by_window.append(rent(s, b0))
     cost = float(np.sum(windows[0].cost_inv * windows[0].nameplate))
     annual = cost - float(np.sum(by_window)) * HOURS_PER_YEAR / sum(s.T for s in windows)
     if key is not None:
