@@ -58,7 +58,7 @@ weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN, reserve_offe
 scenario = weeks[WEEK]
 market = fl.Market(fl.named_ordcs(scenario)[RESERVE])
 market = replace(market, C_inv=fl.C_inv(market, weeks))
-tau = fl.named_tariffs(scenario)["tau_0_pjm" if RESERVE == "n-1" else f"tau_0_{RESERVE}"]  # each construct with its market's tariff
+tau = fl.named_tariffs(scenario)["tau_0"]  # today's tariff, the same under every construct
 theta = fl.named_types(T, WORKLOAD)[TYPE]
 offer = fl.c_sigma(theta, scenario.delta)
 d_firm = theta.d_firm(scenario.delta)

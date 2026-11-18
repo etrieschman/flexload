@@ -11,7 +11,7 @@
 # | 1 | What is the load's flexibility worth, and where does the money go? | construct × workload × contract |
 # | 2 | Which construct sheds less, at what reserve cost, and does the response help? | the same |
 #
-# Each construct runs with its market's form of today's tariff. Tables 1 and 2
+# Every construct runs with today's tariff, tau_0. Tables 1 and 2
 # sum the weeks in `WEEKS`. Rows are cached in `notebooks/tables/rows.csv`: a
 # row already there is read, not recomputed. Set `REFRESH = True` after the
 # code changes. Tables go to `notebooks/tables` as .csv and as booktabs .tex
@@ -43,7 +43,6 @@ ALPHA = 0.1  # the load's size, its share of system load
 RESERVE_MARGIN = 0.06  # where ERCOT's rent pays the fleet (notebooks/tune_reserve_margin.py)
 RESERVE_OFFER = 0.1
 CONSTRUCTS = ("ercot", "pjm", "n-1")  # remove one to drop its runs
-TARIFF = {"ercot": "tau_0_ercot", "pjm": "tau_0_pjm", "n-1": "tau_0_pjm"}  # each construct with its market's tariff
 WORKLOADS = ("training", "inference")
 CONTRACTS = {"firm": "mover", "curtailable": "curtailable"}  # the contract and the named type that carries it
 BELIEFS = ("exogenous",)  # add "consistent": the fixed point, about a minute per row and week
@@ -144,7 +143,7 @@ for c, workload, (contract, kind), belief, week in product(CONSTRUCTS, WORKLOADS
     if key in done:
         continue
     theta = fl.named_types(T, workload)[kind]
-    row = fl.summary(theta, fl.named_tariffs(scenario)[TARIFF[c]], markets[c], scenario, belief, draws=DRAWS)
+    row = fl.summary(theta, fl.named_tariffs(scenario)["tau_0"], markets[c], scenario, belief, draws=DRAWS)
     new.append({**row, "workload": workload, "contract": contract, "alpha": ALPHA, "margin": RESERVE_MARGIN, "draws": DRAWS})
     print(f"{time.time() - t0:5.0f} s\t{c}\t{workload}\t{contract}\t{belief}\tweek {week}", flush=True)
 if new:

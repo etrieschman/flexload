@@ -124,14 +124,11 @@ class TwoPart:
 class Tariff:
     """One charge form per layer, plus two slots: ``credit`` pays a load that
     sells reserve μᵀσ; ``exempt_curtailable`` frees a curtailable load from the
-    reserve charge, since its headroom displaces procured reserve.
-    ``investment`` may be ``None``: the layer is not billed, to the load or to
-    anyone else, and what the fleet's rent does not pay stays with the
-    generators. That is an energy-only market."""
+    reserve charge, since its headroom displaces procured reserve."""
 
     energy: Marginal | Share | TwoPart
     reserve: Marginal | Share | TwoPart
-    investment: Marginal | Share | TwoPart | None
+    investment: Marginal | Share | TwoPart
     credit: bool = True
     exempt_curtailable: bool = False
     name: str = ""
@@ -139,19 +136,16 @@ class Tariff:
     def _layers(self, realized: Dispatch, b0: Dispatch) -> list:
         """The billed layers as (name, form, pool, price). The pool is hourly
         and comes from ``b0`` if the form is ex ante, else from ``realized``;
-        the price is always the realized one. The investment layer is left out
-        when the tariff does not bill it."""
+        the price is always the realized one."""
         energy = b0 if self.energy.ex_ante else realized
         reserve = b0 if self.reserve.ex_ante else realized
-        layers = [
+        investment = b0 if self.investment.ex_ante else realized
+        hours = self.investment.hours
+        return [
             ("energy", self.energy, energy.C_energy, realized.lam),
             ("reserve", self.reserve, reserve.C_res, realized.mu),
+            ("investment", self.investment, investment.C_inv * hours / hours.sum(), np.ones(hours.shape)),
         ]
-        if self.investment is not None:
-            investment = b0 if self.investment.ex_ante else realized
-            hours = self.investment.hours
-            layers.append(("investment", self.investment, investment.C_inv * hours / hours.sum(), np.ones(hours.shape)))
-        return layers
 
     def bill(
         self,
@@ -226,14 +220,19 @@ def _divide(a, b) -> np.ndarray:
 # today's tariff τ₀
 # ----------------------------------------------------------------------------
 def named_tariffs(scenario: Scenario) -> dict[str, Tariff]:
-    """τ₀, today's tariff, in each market's form: energy at the margin and
-    reserve split ex ante in both. ``tau_0_pjm`` splits the investment layer
-    ex ante on the peak hour t*, as a capacity charge does. ``tau_0_ercot``
-    does not bill it: ERCOT does not pay for capacity, so generators recover
-    their fixed cost from prices or not at all. Pair each with its construct."""
+    """τ₀, today's tariff, the same under every construct: energy at the
+    margin, reserve split ex ante in every hour, and the investment layer split
+    ex ante on the peak hour t*, as a capacity charge does. Where the fleet's
+    rent pays its cost the investment pool is zero and the layer bills nothing:
+    ERCOT at the calibrated reserve margin, as in an energy-only market."""
     every_hour, peak = np.ones(scenario.T), peak_hour(scenario.d_sys)
-    layers = dict(energy=Marginal(hours=every_hour, ex_ante=False), reserve=Share(hours=every_hour, ex_ante=True), credit=True, exempt_curtailable=False)
     return {
-        "tau_0_ercot": Tariff(investment=None, name="tau_0_ercot", **layers),
-        "tau_0_pjm": Tariff(investment=Share(hours=peak, ex_ante=True), name="tau_0_pjm", **layers),
+        "tau_0": Tariff(
+            energy=Marginal(hours=every_hour, ex_ante=False),
+            reserve=Share(hours=every_hour, ex_ante=True),
+            investment=Share(hours=peak, ex_ante=True),
+            credit=True,
+            exempt_curtailable=False,
+            name="tau_0",
+        )
     }
