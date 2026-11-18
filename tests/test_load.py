@@ -135,7 +135,8 @@ def test_summary_row(n1, small):
         theta = named_types(small.T)[name]
         row = summary(theta, named_tariffs(small)["tau_0"], n1, small)
         assert row["efficiency"] >= -1e-4 and row["tariff"] == "tau_0"
-        assert row["worst_1"] < 1e-6 and row["shed_tail"] >= row["shed"] >= 0.0  # the requirement covers one trip
+        assert row["worst_1"] < 1e-6 and row["shed_max"] >= row["shed_tail"] >= row["shed"] >= 0.0  # the requirement covers one trip
+        assert np.isclose(row["S_realized"], row["S_R"] + row["C_ordc"] - n1.c_shed * row["shed"])  # realized welfare: the ORDC's cost out, shed at c^shed in
 
 
 def test_table_and_choice(small):

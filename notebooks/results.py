@@ -44,7 +44,7 @@ RESERVE_MARGIN = 0.06  # where ERCOT's rent pays the fleet (notebooks/tune_reser
 RESERVE_OFFER = 0.1
 CONSTRUCTS = ("ercot", "pjm", "n-1")  # remove one to drop its runs
 WORKLOADS = ("training", "inference")
-CONTRACTS = {"firm": "mover", "curtailable": "curtailable"}  # the contract and the named type that carries it
+CONTRACTS = {"firm": "mover"}  # the contract and the named type that carries it; add "curtailable": "curtailable" for the curtailable contract
 BELIEFS = ("exogenous",)  # add "consistent": the fixed point, about a minute per row and week
 DRAWS = 200  # draws of realized dispatch per window
 REFRESH = False  # True recomputes every row and the baseline year
@@ -152,6 +152,7 @@ if new:
 rows = cached.filter(
     pl.col("market").is_in(CONSTRUCTS)
     & pl.col("workload").is_in(WORKLOADS)
+    & pl.col("contract").is_in(list(CONTRACTS))
     & pl.col("belief").is_in(BELIEFS)
     & pl.col("start").is_in([weeks[w].start for w in WEEKS])
     & (pl.col("alpha") == ALPHA)
@@ -187,9 +188,11 @@ save(table_1, "table_1", digits=2)
 # Table 2. The test after dispatch, at B0 and at R, the weeks summed. Reserve
 # cost is the pool μ × reserve bought [M$]. Lowest reserve is the tightest
 # hour's [MW]. Shed is over DRAWS draws of trips, the net-load error and the
-# load's own variability [MWh]: its mean, and the mean of the worst 5% of
-# draws in the worst week. Two trips is the shed if the two thermal units with
-# the most output and reserve trip together, in the worst hour [MW].
+# load's own variability [MWh]: its mean, the mean of the worst 5% of draws
+# and the worst draw, each in the worst week. Realized welfare is S with the
+# ORDC's cost replaced by the mean shed at c^shed, which compares constructs
+# [M$]. Two trips is the shed if the two thermal units with the most output
+# and reserve trip together, in the worst hour [MW].
 table_2 = rows.group_by(GROUP, maintain_order=True).agg(
     (pl.col("reserve_cost_b0").sum() / M).alias("reserve cost, B0"),
     (pl.col("reserve_cost").sum() / M).alias("reserve cost, R"),
@@ -199,6 +202,10 @@ table_2 = rows.group_by(GROUP, maintain_order=True).agg(
     pl.col("shed").sum().alias("shed, R"),
     pl.col("shed_tail_b0").max().alias("worst 5%, B0"),
     pl.col("shed_tail").max().alias("worst 5%, R"),
+    pl.col("shed_max_b0").max().alias("worst draw, B0"),
+    pl.col("shed_max").max().alias("worst draw, R"),
+    (pl.col("S_realized_b0").sum() / M).alias("realized welfare, B0"),
+    (pl.col("S_realized").sum() / M).alias("realized welfare, R"),
     pl.col("worst_2_b0").max().alias("two trips, B0"),
     pl.col("worst_2").max().alias("two trips, R"),
 )

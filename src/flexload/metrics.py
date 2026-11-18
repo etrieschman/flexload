@@ -161,11 +161,12 @@ def summary(
     Then what the construct costs and what it covers, at B0 and at R: the
     reserve pool C^res, the ORDC's cost C^ORDC, the lowest reserve held, load shed
     over ``draws`` draws
-    of realized dispatch (the window's MWh: its mean, and the mean of the worst
-    5% of draws, since shed is rare and a percentile is often zero; the
-    seed is the window's start, so every construct and type sees the same
-    draws), and the worst hour's shed if the largest one or two thermal units
-    trip. ``hours_at_bound`` counts the hours where the bid sits at the
+    of realized dispatch (the window's MWh: its mean, the mean of the worst
+    5% of draws, since shed is rare and a percentile is often zero, and the
+    worst draw; the seed is the window's start, so every construct and type
+    sees the same draws), realized welfare (``S_realized``: S with the ORDC's
+    cost replaced by the mean shed at c^shed, so it compares constructs), and
+    the worst hour's shed if the largest one or two thermal units trip. ``hours_at_bound`` counts the hours where the bid sits at the
     tolerance β δ_t, where the bid does not depend on V.
     ``b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if already solved.
     S is read from a clearing at each of the three bids."""
@@ -195,7 +196,7 @@ def summary(
     )
     value = S_B1 - S_B0
     realized = {}
-    for at, x in (("_b0", b0), ("", dispatch)):
+    for at, x, S_hat in (("_b0", b0, S_B0), ("", dispatch, S_R)):
         mwh = shed(scenario, x, theta, np.random.default_rng(scenario.start), draws).sum(axis=1)
         realized |= {
             f"reserve_cost{at}": float(x.C_res.sum()),
@@ -203,6 +204,8 @@ def summary(
             f"reserve_min{at}": float(reserve(x).min()),
             f"shed{at}": float(mwh.mean()),
             f"shed_tail{at}": float(np.sort(mwh)[-max(draws // 20, 1):].mean()),
+            f"shed_max{at}": float(mwh.max()),
+            f"S_realized{at}": S_hat + float(x.C_ordc.sum()) - market.c_shed * float(mwh.mean()),
             f"worst_1{at}": float(worst(scenario, x, 1).max()),
             f"worst_2{at}": float(worst(scenario, x, 2).max()),
         }
