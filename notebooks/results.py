@@ -49,14 +49,21 @@ CONTRACTS = {"firm": "mover"}  # the contract and the named type that carries it
 BELIEFS = {"exogenous": False, "consistent": True}  # the belief and whether it is the consistent one; consistent is about a minute per row and week
 # The base setting and the sensitivities (report Table 4): alpha is the load's
 # size, margin the reserve margin at the year's tightest hour, scale multiplies
-# the strike and the penalty, kappa is the load's variability. Each
-# sensitivity changes one value and repeats the run under the exogenous belief.
-BASE = {"alpha": 0.1, "margin": 0.06, "scale": 1.0, "kappa": fl.WORKLOAD["training"]["kappa"]}
-SENSITIVITIES = {"margin": (0.04, 0.10), "alpha": (0.05, 0.20), "scale": (0.5, 2.0), "kappa": (0.0, 0.05, 0.10)}
+# the strike and the penalty, chi and psi set them outright, kappa is the
+# load's variability. None keeps the workload's own value. Each sensitivity
+# changes one value and repeats the run under the exogenous belief.
+BASE = {"alpha": 0.1, "margin": 0.06, "scale": 1.0, "chi": None, "psi": None, "kappa": None}
+SENSITIVITIES = {
+    "margin": (0.04, 0.10),
+    "alpha": (0.05, 0.20),
+    "scale": (0.5, 2.0),
+    "chi": (3000.0,),  # the spot value of compute, Billimoria and Byers 2026
+    "psi": (2000.0,),  # the marginal loss at the band's edge, 2 psi beta, at that value
+    "kappa": (0.0, 0.05, 0.10),
+}
 DRAWS = 200  # draws of realized dispatch per window
 REFRESH = False  # True recomputes every row and the baseline year
 M = 1e6  # dollars per M$
-assert all(w["kappa"] == BASE["kappa"] for w in fl.WORKLOAD.values())
 
 here = Path(__file__).parent if "__file__" in globals() else Path(".")
 tables = here / "tables"
@@ -143,9 +150,11 @@ save(table_0, "table_0", digits=0)
 # planner's B1, settlement, and realized dispatch over DRAWS draws. The base
 # setting runs under every belief; each sensitivity under the exogenous one.
 SETTINGS = [(BASE, belief) for belief in BELIEFS] + [({**BASE, k: v}, "exogenous") for k, vs in SENSITIVITIES.items() for v in vs]
-KEY = ["construct", "workload", "contract", "belief", "start", "alpha", "margin", "scale", "kappa", "reserve_offer", "T", "draws"]
+KEY = ["construct", "workload", "contract", "belief", "start", "alpha", "margin", "scale", "chi", "psi", "kappa", "reserve_offer", "T", "draws"]
 path = tables / "rows.parquet"  # parquet: each row keeps its draws as a list
 cached = pl.read_parquet(path) if path.exists() and not REFRESH else None
+if cached is not None:  # rows written before a setting existed carry it as null, and match nothing
+    cached = cached.with_columns([pl.lit(None).alias(k) for k in KEY if k not in cached.columns])
 done = set(cached.select(KEY).iter_rows()) if cached is not None else set()
 new = []
 t0 = time.time()
@@ -157,7 +166,8 @@ for (setting, belief), c, workload, (contract, kind), week in product(SETTINGS, 
     if key in done:
         continue
     theta = fl.named_types(T, workload)[kind]
-    theta = replace(theta, chi=setting["scale"] * theta.chi, psi=setting["scale"] * theta.psi, kappa=setting["kappa"])
+    theta = replace(theta, chi=setting["scale"] * theta.chi, psi=setting["scale"] * theta.psi)
+    theta = replace(theta, **{k: setting[k] for k in ("chi", "psi", "kappa") if setting[k] is not None})
     row = fl.summary(theta, fl.named_tariffs(scenario)["tau_0"], markets_[c], scenario, BELIEFS[belief], draws=DRAWS)
     new.append({**row, **tags})
     print(f"{time.time() - t0:5.0f} s\t{c}\t{workload}\t{belief}\t{setting}\tweek {week}", flush=True)
@@ -180,8 +190,8 @@ others = pl.sum_horizontal("fairness_energy", "fairness_reserve", "fairness_inve
 
 
 def at(rows: pl.DataFrame, setting: dict) -> pl.DataFrame:
-    """The rows of one setting."""
-    return rows.filter(pl.all_horizontal(pl.col(k) == v for k, v in setting.items()))
+    """The rows of one setting; None matches a null, the workload's own value."""
+    return rows.filter(pl.all_horizontal(pl.col(k).is_null() if v is None else pl.col(k) == v for k, v in setting.items()))
 
 
 base = at(rows, BASE)

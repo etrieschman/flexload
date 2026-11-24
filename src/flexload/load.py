@@ -72,8 +72,8 @@ class LoadType:
 # loses the requests it does not serve: a strike, nothing conserved, a narrow
 # tolerance. A is a function of T: one block over the window, or no block.
 WORKLOAD = {
-    "training": dict(psi=100.0, chi=0.0, beta=0.5, A=lambda T: np.ones((1, T)), kappa=0.2),
-    "inference": dict(psi=0.0, chi=500.0, beta=0.1, A=lambda T: np.zeros((0, T)), kappa=0.2),
+    "training": dict(psi=100.0, chi=0.0, beta=0.5, A=lambda T: np.ones((1, T)), kappa=0.25),
+    "inference": dict(psi=0.0, chi=500.0, beta=0.1, A=lambda T: np.zeros((0, T)), kappa=0.15),
 }
 FIRM = 0.9  # the data center's contract: the share of min_t δ_t it keeps firm, whatever it runs
 P = 0.05  # the believed chance a sold MW is called
