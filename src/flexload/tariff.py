@@ -20,8 +20,9 @@ split pool is exact either way.
 
 Slots: ``ex_ante`` reads Cᵏ from the dispatch at the load's preferred profile
 (δ, 0), the B0 dispatch ``b0``, as ERCOT procures reserve against a forecast;
-otherwise from the dispatch at the bid, ``dispatch``. Each layer's form sets it. ``credit`` pays a load that sells reserve μᵀσ.
-``exempt_curtailable`` frees a curtailable load from the reserve charge.
+otherwise from the dispatch at the bid, ``dispatch``. Each layer's form sets it.
+The reserve payment μᵀσ to a load that sells reserve is a credit layer of the
+bill. ``exempt_curtailable`` frees a curtailable load from the reserve charge.
 
 Formulas are cvxpy expressions on numbers or variables alike; read ``.value``.
 """
@@ -52,10 +53,7 @@ def peak_hour(d_sys: np.ndarray) -> np.ndarray:
 class Marginal:
     """Bᵏ = Σ_t price_t x_t: the layer's price on each MWh. Energy under τ₀, price λ."""
 
-    hours: np.ndarray
-    ex_ante: bool = (
-        False  # the price is always the one at the bid; kept so every form has the slot
-    )
+    hours: np.ndarray  # the price is always the one at the bid, so there is no ex_ante slot
 
     def charge(self, x, x_hat, x_other, pool, price, knows_share: bool = False):
         return cp.sum(cp.multiply(price, x))
@@ -122,14 +120,13 @@ class TwoPart:
 # ----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Tariff:
-    """One charge form per layer, plus two slots: ``credit`` pays a load that
-    sells reserve μᵀσ; ``exempt_curtailable`` frees a curtailable load from the
+    """One charge form per layer, the credit μᵀσ to a load that sells reserve,
+    and one slot: ``exempt_curtailable`` frees a curtailable load from the
     reserve charge, since its headroom displaces procured reserve."""
 
     energy: Marginal | Share | TwoPart
     reserve: Marginal | Share | TwoPart
     investment: Marginal | Share | TwoPart
-    credit: bool = True
     exempt_curtailable: bool = False
     name: str = ""
 
@@ -137,9 +134,9 @@ class Tariff:
         """The billed layers as (name, form, pool, price). The pool is hourly
         and comes from ``b0`` if the form is ex ante, else from ``dispatch``;
         the price is always the one at the bid."""
-        energy = b0 if self.energy.ex_ante else dispatch
-        reserve = b0 if self.reserve.ex_ante else dispatch
-        investment = b0 if self.investment.ex_ante else dispatch
+        energy, reserve, investment = (
+            b0 if getattr(form, "ex_ante", False) else dispatch for form in (self.energy, self.reserve, self.investment)
+        )
         hours = self.investment.hours
         return [
             ("energy", self.energy, energy.C_energy, dispatch.lam),
@@ -184,9 +181,7 @@ class Tariff:
             out[k] = form.charge(x, x_hat, x_other, pool, price, knows_share)
         if self.exempt_curtailable and dispatch.curtailable:
             out["reserve"] = cp.Constant(0.0)
-        out["credit"] = (
-            -cp.sum(cp.multiply(dispatch.mu, sigma)) if self.credit else cp.Constant(0.0)
-        )
+        out["credit"] = -cp.sum(cp.multiply(dispatch.mu, sigma))
         return out
 
     def marginal(
@@ -228,10 +223,9 @@ def named_tariffs(scenario: Scenario) -> dict[str, Tariff]:
     every_hour, peak = np.ones(scenario.T), peak_hour(scenario.d_sys)
     return {
         "tau_0": Tariff(
-            energy=Marginal(hours=every_hour, ex_ante=False),
+            energy=Marginal(hours=every_hour),
             reserve=Share(hours=every_hour, ex_ante=True),
             investment=Share(hours=peak, ex_ante=True),
-            credit=True,
             exempt_curtailable=False,
             name="tau_0",
         )

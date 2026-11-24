@@ -47,21 +47,16 @@ def worst(scenario: Scenario, dispatch: Dispatch, k: int) -> np.ndarray:
 def outcomes(scenario: Scenario, dispatch: Dispatch, theta: LoadType, draws: int) -> dict:
     """What a dispatch holds and what it sheds once the imbalance realizes: the
     reserve pool C^res, the ORDC's cost C^ORDC, the lowest reserve held, load
-    shed over ``draws`` draws (the window's MWh: its mean, the mean of the
-    worst 5% of draws, since shed is rare and a percentile is often zero, the
-    worst draw, and every draw as ``shed_draws``), and the worst hour's shed if
-    the largest one or two thermal units trip. The seed is the window's start,
-    so every construct and type sees the same draws."""
+    shed in each of ``draws`` draws (the window's MWh, ``shed_draws``; the
+    tables sum them over windows draw by draw), and the worst hour's shed if
+    the two largest thermal units trip. The seed is the window's start, so
+    every construct and type sees the same draws."""
     mwh = shed(scenario, dispatch, theta, np.random.default_rng(scenario.start), draws).sum(axis=1)
     R = reserve(dispatch.r, dispatch.sigma, dispatch.d, dispatch.d_firm).value
     return {
         "reserve_cost": float(dispatch.C_res.sum()),
         "C_ordc": float(dispatch.C_ordc.sum()),
         "reserve_min": float(R.min()),
-        "shed": float(mwh.mean()),
-        "shed_tail": float(np.sort(mwh)[-max(draws // 20, 1):].mean()),
-        "shed_max": float(mwh.max()),
         "shed_draws": mwh.tolist(),
-        "worst_1": float(worst(scenario, dispatch, 1).max()),
         "worst_2": float(worst(scenario, dispatch, 2).max()),
     }

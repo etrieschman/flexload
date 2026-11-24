@@ -68,12 +68,11 @@ for margin in MARGINS:
     hours = sum(w.T for w in weeks)
     for m in MARKETS:
         t0 = time.time()
-        mk = fl.Market(fl.named_ordcs(weeks[0])[m], C_inv=0.0)  # the pool is what this notebook computes
+        mk = fl.Market(fl.named_ordcs(weeks[0])[m])  # the pool is what this notebook computes
         rent = shed = 0.0
         scarce = {"year": 0, "week": 0}
         above = {100: 0, 1000: 0}  # hours with the reserve price above $100 and $1,000
-        for i, w in enumerate(weeks):
-            b0 = mk.clear(w, w.delta, np.zeros(T), np.zeros(T))
+        for i, (w, b0) in enumerate(zip(weeks, fl.baseline(mk, weeks))):
             rent += fleet_rent(w, b0)  # the fleet's profit: revenue above fuel and reserve offers
             shed += float(b0.s.sum())
             hot = int((b0.mu > w.cost_res.max() + 1e-6).sum())  # the reserve price is above every reserve offer

@@ -10,7 +10,7 @@ from flexload.system import Market, named_ordcs, reserve
 
 
 def clear(small, name):
-    return Market(named_ordcs(small)[name], C_inv=0.0).clear(small, small.delta, np.zeros(small.T), np.zeros(small.T))
+    return Market(named_ordcs(small)[name], C_inv_year=0.0).clear(small, small.delta, np.zeros(small.T), np.zeros(small.T))
 
 
 def test_a_requirement_on_the_largest_unit_covers_one_trip(small):

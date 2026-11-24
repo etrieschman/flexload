@@ -41,7 +41,7 @@ RESERVE_MARGIN = 0.06  # spare capacity at the year's tightest hour (the default
 RESERVE_OFFER = 0.1  # cʳⱼ = RESERVE_OFFER × cᵍⱼ; RTS-GMLC does not give reserve offers
 RESERVE = "ercot"  # the construct: "ercot" (a curve), "pjm" (two steps) or "n-1" (a hard requirement)
 WORKLOAD = "training"  # or "inference": what the data center runs, which sets (psi, chi, beta, A, kappa)
-TYPE = "mover"  # inflexible, mover, controllable, emergency, curtailable
+TYPE = "mover"  # inflexible, mover, controllable, curtailable
 print(f"RTS-GMLC data folder:\t{rts.data_root()}")
 print(f"RTS-GMLC git ref:\t{rts.REF[:8]}")
 
@@ -57,7 +57,7 @@ t0 = time.time()
 weeks = fl.windows(T=T, alpha=ALPHA, reserve_margin=RESERVE_MARGIN, reserve_offer=RESERVE_OFFER)
 scenario = weeks[WEEK]
 market = fl.Market(fl.named_ordcs(scenario)[RESERVE])
-market = replace(market, C_inv=fl.C_inv(market, weeks))
+market = replace(market, C_inv_year=fl.C_inv(market, weeks))
 tau = fl.named_tariffs(scenario)["tau_0"]  # today's tariff, the same under every construct
 theta = fl.named_types(T, WORKLOAD)[TYPE]
 offer = fl.c_sigma(theta, scenario.delta)
@@ -73,8 +73,8 @@ delta_range = f"{scenario.delta.min():,.0f}-{scenario.delta.max():,.0f}"
 print(f"load's preferred profile delta, min-max [MW]:\t{delta_range}")
 print(f"this window's tightest-hour margin [fraction]:\t{fl.margin(scenario):.3f}")
 print(f"ex-ante peak hour t* [hour of window]:\t{int(np.argmax(scenario.d_sys))}")
-print(f"annual investment-layer cost C_inv [M$]:\t{market.C_inv / 1e6:,.1f}")
-print(f"this window's share of C_inv [M$]:\t{market.C_inv * T / 8760 / 1e6:,.2f}")
+print(f"annual investment-layer cost C_inv [M$]:\t{market.C_inv_year / 1e6:,.1f}")
+print(f"this window's share of C_inv [M$]:\t{market.C_inv_year * T / 8760 / 1e6:,.2f}")
 print(f"within-hour net-load error, normal fit (m, v) [MW]:\t{scenario.error_fit.m:,.0f}, {scenario.error_fit.v:,.0f}")
 print(f"ORDC first steps (edge above the contingency [MW], price below it [$/MWh]):\t{steps[:4]} ...")
 

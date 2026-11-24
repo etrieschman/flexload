@@ -1,9 +1,10 @@
 """Settlement, welfare, the outcomes, and the loop that fills the operator's
 table, one row per (type, tariff, construct, window).
 
-Outcomes: welfare S at B0, B1 and R; efficiency S^B1 − S^R; per layer,
-alignment Δᵏ_t, recovery ρᵏ and fairness; and, once the imbalance realizes,
-load shed and realized welfare (``realized.outcomes``).
+Outcomes: welfare S at B0, B1 and R; efficiency S^B1 − S^R; the bills and
+fairness; and, once the imbalance realizes, load shed and realized welfare
+(``realized.outcomes``). Alignment Δᵏ_t and recovery ρᵏ are read off a
+dispatch by ``alignment`` and ``recovery``; the tables do not carry them.
 """
 
 from __future__ import annotations
@@ -151,32 +152,26 @@ def summary(
     bid_b1: tuple | None = None,
     draws: int = 200,
 ) -> dict:
-    """One row. At dispatch: welfare at B0, B1 and R, efficiency and its share
-    of the value of flexibility, the bill by layer at B0, R and B1, alignment
-    at R, recovery at R and B1, fairness, the fleet's rent at B0, R and B1, the
-    belief's price error, and the fixed point's iterations and last change.
-    After the imbalance realizes, at B0 and at R: ``realized.outcomes``, and
-    realized welfare ``S_realized``, which is S with the ORDC's cost replaced
-    by the mean shed at c^shed, so it compares constructs.
-    ``hours_at_bound`` counts the hours where the bid sits at the tolerance
-    β δ_t, where the bid does not depend on V. ``bid_b1`` is the bid
-    ``(d_bid, σ_bid)`` from ``planner`` if already solved."""
+    """One row. At dispatch: welfare at B0, B1 and R, the value of flexibility
+    S^B1 − S^B0 and what the tariff loses of it, S^B1 − S^R; the load's bill at
+    B0 and R; everyone else's bill change by layer (fairness); the fleet's rent
+    at B0 and R; and the fixed point's iterations and last change (None when
+    exogenous). After the imbalance realizes, at B0 and at R:
+    ``realized.outcomes`` and realized welfare ``S_realized``, which is S with
+    the ORDC's cost replaced by the mean shed at c^shed, so it compares
+    constructs. ``bid_b1`` is the bid ``(d_bid, σ_bid)`` from ``planner`` if
+    already solved. Alignment and recovery are not in the row: ``alignment``
+    and ``recovery`` read them off a dispatch."""
     dispatch, b0, believed, history = respond(theta, tariff, market, scenario, consistent)
     d1, s1 = planner(theta, market, scenario) if bid_b1 is None else bid_b1
-    planned = market.clear(
-        scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta)
-    )
-    bill, bill_b0, bill_b1 = (settle(tariff, scenario, x, b0) for x in (dispatch, b0, planned))
-    rho, rho_b1 = (recovery(tariff, scenario, x, b0) for x in (dispatch, planned))
-    fair = fairness(tariff, scenario, dispatch, b0)
+    planned = market.clear(scenario, d1, s1, c_sigma(theta, scenario.delta), theta.d_firm(scenario.delta))
+    bill, bill_b0 = (settle(tariff, scenario, x, b0) for x in (dispatch, b0))
     S_B0, S_R, S_B1 = (welfare(theta, market, scenario, x) for x in (b0, dispatch, planned))
-    value = S_B1 - S_B0
     after = {}
     for at, x, S_hat in (("_b0", b0, S_B0), ("", dispatch, S_R)):
         out = outcomes(scenario, x, theta, draws)
-        out["S_realized"] = S_hat + out["C_ordc"] - market.c_shed * out["shed"]
+        out["S_realized"] = S_hat + out.pop("C_ordc") - market.c_shed * float(np.mean(out["shed_draws"]))
         after |= {f"{k}{at}": v for k, v in out.items()}
-    at_bound = np.isclose(np.abs(dispatch.d_bid - scenario.delta), theta.beta * scenario.delta, atol=1e-4)
     return {
         "tariff": tariff.name,
         "type": theta.name,
@@ -186,25 +181,14 @@ def summary(
         "S_B0": S_B0,
         "S_B1": S_B1,
         "S_R": S_R,
+        "value_of_flexibility": S_B1 - S_B0,
         "efficiency": S_B1 - S_R,
-        "value_of_flexibility": value,
-        "efficiency_share": (S_B1 - S_R) / value if value > 1e-9 else None,
-        **{f"bill_{k}": v for k, v in bill.items()},
         "bill_total": sum(bill.values()),
-        **{f"bill_b0_{k}": v for k, v in bill_b0.items()},
         "bill_b0_total": sum(bill_b0.values()),
-        **{f"bill_b1_{k}": v for k, v in bill_b1.items()},
-        "bill_b1_total": sum(bill_b1.values()),
-        **alignment_summary(alignment(tariff, scenario, dispatch, b0)),
-        **{f"recovery_{k}": v for k, v in rho.items()},
-        **{f"recovery_b1_{k}": v for k, v in rho_b1.items()},
-        **{f"fairness_{k}": v for k, v in fair.items()},
+        **{f"fairness_{k}": v for k, v in fairness(tariff, scenario, dispatch, b0).items()},
         "rent_b0": rent(scenario, b0),
         "rent": rent(scenario, dispatch),
-        "rent_b1": rent(scenario, planned),
         **after,
-        "hours_at_bound": int(at_bound.sum()) if theta.beta > 0 else 0,
-        "price_error": float(np.abs(believed.lam - dispatch.lam).mean()),
         "iterations": len(history) or None,
         "last_change": history[-1] if history else None,
     }

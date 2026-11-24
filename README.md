@@ -26,7 +26,7 @@ import flexload as fl
 weeks = fl.windows()                                         # the year in weeks: load at 10% of the system, a 6% margin
 scenario = weeks[29]                                         # the week with the year's tightest hour
 market = fl.Market(fl.named_ordcs(scenario)["ercot"])        # the reserve construct: "ercot", "pjm" or "n-1"
-market = replace(market, C_inv=fl.C_inv(market, weeks))      # the fleet's cost less its rent over the year, cached
+market = replace(market, C_inv_year=fl.C_inv(market, weeks)) # the fleet's cost less its rent over the year, cached
 tau = fl.named_tariffs(scenario)["tau_0"]                    # today's tariff, the same under every construct
 theta = fl.named_types(scenario.T, "training")["mover"]      # a firm data center running training
 

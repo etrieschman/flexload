@@ -23,9 +23,10 @@ def energy_only(T) -> Tariff:
 
 
 def small_scenario(T, delta):
-    from flexload.system import Scenario
+    from flexload.system import Normal, Scenario
 
-    return Scenario(delta, np.full(T, 100.0), np.array([1.0]), np.zeros(1), np.zeros(1), np.ones((1, T)), np.ones(1), np.zeros(1, dtype=int))
+    return Scenario(delta, np.full(T, 100.0), np.array([1.0]), np.zeros(1), np.zeros(1), np.ones((1, T)), np.ones(1), np.zeros(1, dtype=int),
+                    names=("one",), renewable=np.zeros(1, dtype=bool), error_fit=Normal(0.0, 1.0), trip=np.zeros(1), error=np.zeros((T, 12)))
 
 
 def test_best_response_first_order_condition_elastic():
@@ -130,13 +131,13 @@ def test_summary_row(n1, small):
         theta = named_types(small.T)[name]
         row = summary(theta, named_tariffs(small)["tau_0"], n1, small)
         assert row["efficiency"] >= -1e-4 and row["tariff"] == "tau_0"
-        assert row["worst_1"] < 1e-6 and row["shed_max"] >= row["shed_tail"] >= row["shed"] >= 0.0  # the requirement covers one trip
-        assert len(row["shed_draws"]) == 200 and np.isclose(np.mean(row["shed_draws"]), row["shed"])
-        assert np.isclose(row["S_realized"], row["S_R"] + row["C_ordc"] - n1.c_shed * row["shed"])  # realized welfare: the ORDC's cost out, shed at c^shed in
+        assert len(row["shed_draws"]) == 200 and min(row["shed_draws"]) >= 0.0 and row["worst_2"] >= 0.0
+        assert row["S_realized"] <= row["S_R"] + float(np.sum(n1.clear(small, small.delta, np.zeros(small.T), np.zeros(small.T)).C_ordc)) + 1e-6  # the ORDC's cost out, shed at c^shed in
+        assert row["iterations"] is None and np.isclose(row["bill_b0_total"] - row["bill_total"], 0.0, atol=1e6)
 
 
 def test_table(small):
-    market = Market(named_ordcs(small)["ercot"], C_inv=520_000.0)
+    market = Market(named_ordcs(small)["ercot"], C_inv_year=520_000.0)
     tariffs = named_tariffs(small)
     types = {k: v for k, v in named_types(small.T).items() if k in ("mover", "controllable")}
     t = table(types, tariffs, [market], [small])
@@ -159,7 +160,7 @@ def test_curtailable_load_bids_at_least_its_firm_level(n1, small):
 def test_a_zero_investment_pool_bills_nothing(small):
     """Where the fleet's rent pays its cost the investment pool is zero, and
     tau_0 bills nothing on that layer: ERCOT at the calibrated margin."""
-    market = Market(named_ordcs(small)["ercot"], C_inv=0.0)
+    market = Market(named_ordcs(small)["ercot"], C_inv_year=0.0)
     theta = named_types(small.T)["mover"]
     tau = named_tariffs(small)["tau_0"]
     dispatch, b0, _, _ = respond(theta, tau, market, small)

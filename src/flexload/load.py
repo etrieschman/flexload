@@ -70,29 +70,25 @@ class LoadType:
 # the data center runs. Training moves work between hours: a penalty on
 # deviation, energy conserved over the window, a wide tolerance. Inference
 # loses the requests it does not serve: a strike, nothing conserved, a narrow
-# tolerance.
+# tolerance. A is a function of T: one block over the window, or no block.
 WORKLOAD = {
-    "training": (100.0, 0.0, 0.5, "window", 0.2),
-    "inference": (0.0, 500.0, 0.1, "elastic", 0.2),
+    "training": dict(psi=100.0, chi=0.0, beta=0.5, A=lambda T: np.ones((1, T)), kappa=0.2),
+    "inference": dict(psi=0.0, chi=500.0, beta=0.1, A=lambda T: np.zeros((0, T)), kappa=0.2),
 }
-BETA_MIN = 0.1  # the cut the data center commits to whatever it runs; the contract keeps 1 − β_min firm
-FIRM = 1.0 - BETA_MIN
-P = {"low": 0.05, "high": 0.2}
+FIRM = 0.9  # the data center's contract: the share of min_t δ_t it keeps firm, whatever it runs
+P = 0.05  # the believed chance a sold MW is called
 
 
 def named_types(T: int, workload: str = "training") -> dict[str, LoadType]:
-    """θ₀…θ₄ of the report's type table for a data center running
-    ``workload``, which sets (ψ, χ, β, A, κ). The emergency row is fixed at
-    (ψ 100, β 0.05, elastic, p high). The curtailable row's contract is
+    """θ₀…θ₃ of the report's type table for a data center running
+    ``workload``, which sets (ψ, χ, β, A, κ). The curtailable row's contract is
     ``FIRM``, the same for both workloads."""
-    psi, chi, beta, a, kappa = WORKLOAD[workload]
-    A = {"window": np.ones((1, T)), "elastic": np.zeros((0, T))}[a]
+    w = {**WORKLOAD[workload], "A": WORKLOAD[workload]["A"](T)}
     return {
-        "inflexible": LoadType(psi, chi, 0.0, np.eye(T), kappa, name="inflexible"),
-        "mover": LoadType(psi, chi, beta, A, kappa, name="mover"),
-        "controllable": LoadType(psi, chi, beta, A, kappa, P["low"], sells_reserve=True, name="controllable"),
-        "emergency": LoadType(100.0, 0.0, 0.05, np.zeros((0, T)), kappa, P["high"], sells_reserve=True, name="emergency"),
-        "curtailable": LoadType(psi, chi, beta, A, kappa, firm=FIRM, name="curtailable"),
+        "inflexible": LoadType(**{**w, "beta": 0.0, "A": np.eye(T)}, name="inflexible"),
+        "mover": LoadType(**w, name="mover"),
+        "controllable": LoadType(**w, p=P, sells_reserve=True, name="controllable"),
+        "curtailable": LoadType(**w, firm=FIRM, name="curtailable"),
     }
 
 
@@ -100,10 +96,10 @@ def named_types(T: int, workload: str = "training") -> dict[str, LoadType]:
 # V, c^σ, 𝒟_θ, S
 # ----------------------------------------------------------------------------
 def c_sigma(theta: LoadType, delta: np.ndarray) -> np.ndarray:
-    """c^σ = 2 p ψ β, the cost of standing ready: the marginal loss at the
-    band's edge, the largest shed the load tolerates, times the chance p it is
-    called. A rate in $/MWh, the same in every hour."""
-    return np.full(delta.shape, 2.0 * theta.p * theta.psi * theta.beta)
+    """c^σ = p (χ + 2ψβ), the cost of standing ready: the marginal loss at the
+    band's edge, ∂V/∂d at d = (1 − β)δ, the largest shed the load tolerates,
+    times the chance p it is called. A rate in $/MWh, the same in every hour."""
+    return np.full(delta.shape, theta.p * (theta.chi + 2.0 * theta.psi * theta.beta))
 
 
 def V(theta: LoadType, delta: np.ndarray, d, sigma):
@@ -133,6 +129,8 @@ def feasible(theta: LoadType, delta: np.ndarray, d_bid, sigma_bid) -> list:
         cons.append(theta.A @ d_bid == theta.A @ delta)
     if theta.sells_reserve:
         cons += [sigma_bid >= 0.0, d_bid - sigma_bid >= (1.0 - theta.beta) * delta]
+    else:
+        cons.append(sigma_bid == 0.0)
     if theta.curtailable:
         cons.append(d_bid >= theta.d_firm(delta))
     return cons
@@ -203,8 +201,7 @@ def best_response(
     dᶠⁱʳᵐ where the believed dispatch cut it. Returns the bid."""
     T, delta = scenario.T, scenario.delta
     believed = belief.dispatch
-    d_bid = cp.Variable(T)
-    sigma_bid = cp.Variable(T) if theta.sells_reserve else np.zeros(T)
+    d_bid, sigma_bid = cp.Variable(T), cp.Variable(T)
     cons = feasible(theta, delta, d_bid, sigma_bid)
     if theta.sells_reserve:
         clears = believed.mu >= c_sigma(theta, delta) - 1e-12
@@ -217,9 +214,7 @@ def best_response(
     objective = payoff(theta, tariff, scenario, belief, b0, d_tilde, sigma_bid)
     problem = cp.Problem(cp.Maximize(objective), cons)
     solve(problem, solver, {}, "best response")
-    if theta.sells_reserve:
-        sigma_bid = np.asarray(sigma_bid.value)
-    return np.asarray(d_bid.value), sigma_bid
+    return np.asarray(d_bid.value), np.asarray(sigma_bid.value)
 
 
 def fixed_point(
@@ -278,11 +273,8 @@ def planner(theta: LoadType, market: Market, scenario: Scenario) -> tuple[np.nda
     operator's scarcity action, not a scheduling device. Returns the bid
     (d_bid, σ_bid); S^B1 is read from its clearing, as for R."""
     T, J, delta = scenario.T, scenario.J, scenario.delta
-    d_bid = cp.Variable(T)
-    sigma_bid = cp.Variable(T) if theta.sells_reserve else np.zeros(T)
-    sigma = (
-        cp.Variable(T, nonneg=True) if theta.sells_reserve else np.zeros(T)
-    )  # what clears
+    d_bid, sigma_bid = cp.Variable(T), cp.Variable(T)
+    sigma = cp.Variable(T, nonneg=True)  # what clears
     g, r, s = (
         cp.Variable((J, T), nonneg=True),
         cp.Variable((J, T), nonneg=True),
@@ -297,6 +289,4 @@ def planner(theta: LoadType, market: Market, scenario: Scenario) -> tuple[np.nda
     welfare = S(theta, market, scenario, d_bid, sigma, g, r, s, C_ordc)
     problem = cp.Problem(cp.Maximize(welfare), cons)
     solve(problem, market.solver, market.solver_options, "planner")
-    if theta.sells_reserve:
-        sigma_bid = np.asarray(sigma_bid.value)
-    return np.asarray(d_bid.value), sigma_bid
+    return np.asarray(d_bid.value), np.asarray(sigma_bid.value)

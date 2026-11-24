@@ -39,7 +39,7 @@ def test_free_reserve_fills_the_curve(small):
     curve = ORDC(10.0, np.zeros(3), Points(np.array([0.0, 10.0]), np.array([0.6, 0.4])), Expectation(100.0))
     edges, prices = steps(curve, 5000.0)
     assert np.allclose(edges, [0.0, 10.0]) and np.allclose(prices, [100.0, 40.0])
-    market = Market(curve, C_inv=0.0)
+    market = Market(curve, C_inv_year=0.0)
     dp = b0(market, small)
     # reserve is free (no reserve cost, slack capacity): the LP fills the curve until the price is zero
     assert np.allclose(dp.mu, 0.0, atol=1e-6)
@@ -54,7 +54,7 @@ def test_C_sys_is_generation_cost_when_reserve_free(n1, small):
 def test_pools_on_the_dispatch(market, small):
     dp = b0(market, small)
     assert np.allclose(dp.C_res, dp.mu * (dp.r.sum(axis=0) + dp.sigma))
-    assert np.isclose(dp.C_inv, market.C_inv * small.T / HOURS_PER_YEAR)
+    assert np.isclose(dp.C_inv, market.C_inv_year * small.T / HOURS_PER_YEAR)
 
 
 def test_clear_needs_C_inv(small):
@@ -82,6 +82,7 @@ def test_other_load_sheds_at_voll_when_short(n1, small):
     assert dp.s[2] > 0.0 and np.allclose(dp.s[[0, 1, 3]], 0.0, atol=1e-6)
     assert np.isclose(dp.lam[2], 5000.0, rtol=1e-6)
     assert np.isclose(float(n1.C_sys(tight, dp.g, dp.r, dp.sigma, np.zeros(dp.d.shape), dp.s, dp.C_ordc).value), float((tight.cost_gen[:, None] * dp.g).sum()) + 5000.0 * dp.s.sum(), rtol=1e-6)
+    assert np.isclose(dp.C_energy[2], dp.lam[2] * (dp.d[2] + tight.d_other[2] - dp.s[2]))  # the energy layer bills load served, not load shed
 
 
 def test_C_inv_is_annual_cost_less_rents(n1, small):
@@ -104,8 +105,8 @@ def test_rent_is_on_available_capacity_not_nameplate(n1, small):
         cost_inv=np.append(small.cost_inv, 100_000.0),
         unit=np.append(small.unit, 3),
         names=(*small.names, "wind"),
+        renewable=np.append(small.renewable, True),
     )
-    assert windy.renewable.tolist() == [False, False, False, True]
     dp = b0(replace(n1, ordc=named_ordcs(windy)["n-1"]), windy)  # the construct's units are the fleet's
     assert np.allclose(dp.r[3], 0.0, atol=1e-6)
     wind_rent = float(np.sum(dp.lam * dp.g[3]))
@@ -124,6 +125,7 @@ def test_ordc_contingency_is_the_largest_thermal_unit(small):
         cost_inv=np.append(small.cost_inv, 100_000.0),
         unit=np.append(small.unit, 3),
         names=(*small.names, "wind"),
+        renewable=np.append(small.renewable, True),
     )
     assert np.isclose(named_ordcs(windy)["ercot"].min_contingency, 200.0)  # twice the 100 MW unit, not the 900 MW wind farm
 
@@ -153,8 +155,8 @@ def test_pjm_runs_short_of_reserve_before_it_sheds_load(small):
     """Spare capacity of 60 MW against a 100 MW unit. The hard requirement
     sheds load to free reserve; PJM's curve runs short at $850."""
     tight = replace(small, d_other=np.full(small.T, 180.0))  # d_sys = 200 of 260 MW
-    hard = b0(Market(named_ordcs(tight)["n-1"], C_inv=0.0), tight)
-    curve = b0(Market(named_ordcs(tight)["pjm"], C_inv=0.0), tight)
+    hard = b0(Market(named_ordcs(tight)["n-1"], C_inv_year=0.0), tight)
+    curve = b0(Market(named_ordcs(tight)["pjm"], C_inv_year=0.0), tight)
     assert np.all(hard.s > 1.0) and np.all(hard.mu > 850.0)
     assert np.allclose(curve.s, 0.0, atol=1e-6)
     assert np.allclose(curve.mu, 850.0, atol=1e-4)

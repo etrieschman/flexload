@@ -25,6 +25,7 @@ def small() -> Scenario:
         nameplate=nameplate,
         unit=np.array([0, 1, 2]),
         names=("base", "mid", "peaker"),
+        renewable=np.zeros(3, dtype=bool),
         error_fit=Normal(0.0, 10.0),  # MW; sets the ERCOT curve
         trip=np.full(3, 0.01),  # each unit trips in 1 hour of 100
         error=np.zeros((T, 12)),  # the realized net-load error: none
@@ -33,10 +34,10 @@ def small() -> Scenario:
 
 @pytest.fixture(params=["n-1", "pjm", "ercot"])
 def market(request, small) -> Market:
-    return Market(named_ordcs(small)[request.param], C_inv=C_INV)
+    return Market(named_ordcs(small)[request.param], C_inv_year=C_INV)
 
 
 @pytest.fixture
 def n1(small) -> Market:
     """The hard requirement on the largest unit."""
-    return Market(named_ordcs(small)["n-1"], C_inv=C_INV)
+    return Market(named_ordcs(small)["n-1"], C_inv_year=C_INV)

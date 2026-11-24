@@ -41,10 +41,10 @@ PJM_PENALTY, PJM_SECOND_STEP, PJM_EXTENDED = 850.0, 300.0, 190.0 / 1600.0
 ERCOT_SHIFT = 0.5
 
 # Placeholder annualized capital cost by RTS-GMLC category, $/kW-year (RTS-GMLC
-# does not give one). Round numbers that sum to 1,757 M$ a year for the fleet. The
-# reserve margin, 0.06, is where ERCOT's rent pays that (1,796 M$); PJM's rent
-# there is 683 M$ (notebooks/tune_reserve_margin.py). Replace with a cited
-# table before a result depends on the investment layer.
+# does not give one). Round numbers; the fleet's total and the reserve margin
+# at which ERCOT's rent pays it are stated once, in
+# notebooks/tune_reserve_margin.py. Replace with a cited table before a result
+# depends on the investment layer.
 INVESTMENT_COST_PER_KW_YEAR = {
     "Nuclear": 400.0,
     "Coal": 250.0,
@@ -66,21 +66,6 @@ RENEWABLE = ("pv", "rtpv", "wind", "hydro")  # availability from the time series
 # ω and δ
 # ----------------------------------------------------------------------------
 @dataclass(frozen=True)
-class Normal:
-    """An error model: error ~ N(m, v²), in MW."""
-
-    m: float
-    v: float
-
-
-def fit(error: np.ndarray) -> Normal:
-    """The normal fit to a sample of errors, as ERCOT fits its curve: their
-    mean and standard deviation. An operator that learns calls this on the
-    imbalance it has seen."""
-    return Normal(float(np.mean(error)), float(np.std(error)))
-
-
-@dataclass(frozen=True)
 class Scenario:
     """One operating window. Shapes: T hours, J generator columns."""
 
@@ -92,11 +77,12 @@ class Scenario:
     capacity: np.ndarray  # (J, T) available capacity ḡ, MW
     nameplate: np.ndarray  # (J,) installed capacity, MW
     unit: np.ndarray  # (J,) int, physical unit of each column
-    names: tuple[str, ...] = ()
+    names: tuple[str, ...]
+    renewable: np.ndarray  # (J,) bool: wind, solar and hydro columns. They offer no reserve and are not a contingency: their output is a forecast quantity, and its error is in ε
+    error_fit: Normal  # (m, v) of the normal fit to the year's net-load error, MW
+    trip: np.ndarray  # (J,) hourly probability that the column's unit trips, 1/MTTF; zero for renewables
+    error: np.ndarray  # (T, 12) the window's net-load error: each five-minute value less the hour's mean, MW
     start: int = 0  # first hour of the window in the year
-    error_fit: Normal | None = None  # (m, v) of the normal fit to the year's net-load error, MW
-    trip: np.ndarray | None = None  # (J,) hourly probability that the column's unit trips, 1/MTTF; zero for renewables
-    error: np.ndarray | None = None  # (T, 12) the window's net-load error: each five-minute value less the hour's mean, MW
 
     @property
     def T(self) -> int:
@@ -117,14 +103,6 @@ class Scenario:
         ids = np.unique(self.unit)
         return (ids[:, None] == self.unit[None, :]).astype(float)
 
-    @property
-    def renewable(self) -> np.ndarray:
-        """(J,) True for wind, solar and hydro columns, by name. They do not
-        offer reserve and do not count as a contingency: their output is a
-        forecast quantity, and its error is in ε."""
-        return np.array([any(tag in n.upper() for tag in ("WIND", "PV", "HYDRO")) for n in self.names], dtype=bool)
-
-
 def _year(df: pl.DataFrame) -> pl.DataFrame:
     """The data's year without February 29: 8,760 hours, so a year is a year."""
     return df.filter(~((pl.col("month") == 2) & (pl.col("day") == 29)))
@@ -134,7 +112,7 @@ def scenario(
     start: int = 29 * 168,
     T: int = 168,
     alpha: float = 0.1,
-    reserve_margin: float | None = 0.06,
+    reserve_margin: float | None = None,
     reserve_offer: float = 0.1,
 ) -> Scenario:
     """Hours ``[start, start + T)`` of RTS-GMLC's real-time series at one node,
@@ -143,11 +121,9 @@ def scenario(
     hour was; what moves within the hour is the imbalance (``error``).
     ``alpha`` sets the load's size: δ is that share of system load, hour by
     hour, carved out of the RTS total so δ + d° is the data. ``reserve_margin``
-    scales both loads so the tightest hour has that margin (``tighten``). The
-    default 0.06 is the margin at which ERCOT's prices pay the fleet's annual
-    investment cost through rents (1,796 M$ against 1,757 M$;
-    notebooks/tune_reserve_margin.py), and neither market sheds load in
-    dispatch there. Dispatch does not model outages: every unit is available
+    scales both loads so the tightest hour has that margin (``tighten``);
+    ``windows`` sets it for the year, and this one window alone only when it
+    is given here. Dispatch does not model outages: every unit is available
     in every hour, so the margin is capacity that is spare at the tightest hour. ``reserve_offer`` sets the
     reserve offer cʳⱼ = reserve_offer × cᵍⱼ on thermal blocks, since RTS-GMLC
     does not give reserve offers; wind, solar and hydro do not offer reserve."""
@@ -162,7 +138,7 @@ def scenario(
     for kind in RENEWABLE:
         names, mw = _real_time(kind)
         renewable |= {uid: mw[lo:hi, :, i].mean(axis=1) for i, uid in enumerate(names)}
-    cols = []  # (cost_gen, cost_res, cost_inv, capacity (T,), nameplate, unit, name, trip)
+    cols = []  # (cost_gen, cost_res, cost_inv, capacity (T,), nameplate, unit, name, trip, renewable)
     for k, gen in enumerate(rts.gen().iter_rows(named=True)):
         uid, cat = gen["gen_uid"], gen["category"]
         if cat in EXCLUDED:
@@ -171,7 +147,7 @@ def scenario(
         if uid in renewable:
             avail = renewable[uid]
             cols.append(
-                (float(gen["vom"] or 0.0), 0.0, inv, avail, float(gen["pmax_mw"]), k, uid, 0.0)  # no offer: nothing idle to hold
+                (float(gen["vom"] or 0.0), 0.0, inv, avail, float(gen["pmax_mw"]), k, uid, 0.0, True)  # no offer: nothing idle to hold
             )
         else:
             trip = 1.0 / float(gen["mttf_hr"])  # a failure every MTTF hours of running
@@ -179,7 +155,7 @@ def scenario(
                 blocks.filter(pl.col("gen_uid") == uid).select("mw", "cost").iter_rows()
             ):
                 cols.append(
-                    (float(cost), reserve_offer * float(cost), inv, mw * np.ones(T), float(mw), k, uid, trip)
+                    (float(cost), reserve_offer * float(cost), inv, mw * np.ones(T), float(mw), k, uid, trip, False)
                 )
     s = Scenario(
         delta=delta,
@@ -191,10 +167,11 @@ def scenario(
         nameplate=np.array([c[4] for c in cols]),
         unit=np.array([c[5] for c in cols]),
         names=tuple(c[6] for c in cols),
-        start=start,
+        renewable=np.array([c[8] for c in cols], dtype=bool),
         error_fit=fit(_net_load_error()),
         trip=np.array([c[7] for c in cols]),
         error=_net_load_error()[lo:hi],
+        start=start,
     )
     return tighten([s], reserve_margin)[0]
 
@@ -227,10 +204,10 @@ def windows(
 ) -> list[Scenario]:
     """The year cut into operating windows of T hours, under one tightness
     scale: the annual tightest hour has the margin and the other windows keep
-    their seasonal slack. At the default 0.06, ERCOT's prices pay the fleet's
-    investment cost and PJM's leave about 1,070 M$ of it
-    (notebooks/tune_reserve_margin.py). Week 29 holds the year's tightest
-    hour. The last 24 hours of the year fall outside the 52 windows."""
+    their seasonal slack. The default margin is where ERCOT's rent pays the
+    fleet's investment cost (notebooks/tune_reserve_margin.py). Week 29 holds
+    the year's tightest hour. The last 24 hours of the year fall outside the
+    52 windows."""
     hours = HOURS_PER_YEAR
     return tighten(
         [
@@ -254,8 +231,8 @@ def tighten(scenarios: list[Scenario], reserve_margin: float | None) -> list[Sce
             sc,
             delta=sc.delta * s,
             d_other=sc.d_other * s,
-            error_fit=None if sc.error_fit is None else Normal(sc.error_fit.m * s, sc.error_fit.v * s),
-            error=None if sc.error is None else sc.error * s,
+            error_fit=Normal(sc.error_fit.m * s, sc.error_fit.v * s),
+            error=sc.error * s,
         )
         for sc in scenarios
     ]
@@ -269,6 +246,21 @@ def margin(scenario: Scenario) -> float:
 # ----------------------------------------------------------------------------
 # 𝓜_ω
 # ----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Normal:
+    """An error model: error ~ N(m, v²), in MW."""
+
+    m: float
+    v: float
+
+
+def fit(error: np.ndarray) -> Normal:
+    """The normal fit to a sample of errors, as ERCOT fits its curve: their
+    mean and standard deviation. An operator that learns calls this on the
+    imbalance it has seen."""
+    return Normal(float(np.mean(error)), float(np.std(error)))
+
+
 @dataclass(frozen=True)
 class Points:
     """An error model: the error is ``mw[i]`` with ``probability[i]``. One
@@ -297,12 +289,13 @@ class ORDC:
     """A reserve construct: the operator's model of the imbalance,
     ε_t = contingency_t + error, and the statistic that prices it.
     The contingency is the larger of the level R̲ (``min_contingency``) and the
-    largest online unit's output and reserve, each unit weighted by ``units``:
-    0 leaves a unit out, 1 covers it, 1.5 covers it one and a half times.
-    ERCOT sets the level; a requirement on the largest unit sets the vector."""
+    largest online unit's output and reserve, each unit weighted by
+    ``multiple``: 0 leaves a unit out, 1 covers it, 1.5 covers it one and a
+    half times. ERCOT sets the level; a requirement on the largest unit sets
+    the vector."""
 
     min_contingency: float  # R̲, MW
-    units: np.ndarray  # (U,) the multiple of each unit's output and reserve the requirement covers
+    multiple: np.ndarray  # (U,) the multiple of each unit's output and reserve the requirement covers
     error: Normal | Points
     statistic: Expectation | Maximum
     name: str = ""
@@ -383,7 +376,7 @@ class Dispatch:
     mu: np.ndarray  # reserve price μ
     nu: np.ndarray  # (J, T) capacity rent ν
     C_ordc: np.ndarray  # the ORDC's cost C^ORDC_t = Σ_s π_s (w_st − z_st): expected imbalance reserve does not cover
-    C_energy: np.ndarray  # cost of the energy layer, λ_t d_sys_t
+    C_energy: np.ndarray  # cost of the energy layer, λ_t (d_sys_t − s_t): on load served, not on load shed
     C_res: np.ndarray  # cost of the reserve layer, μ_t (Σ_j r_jt + σ_t)
     C_inv: float  # cost of the investment layer for the window: annual Cⁱⁿᵛ × T/8760
     d_bid: np.ndarray  # the load's bid
@@ -430,12 +423,12 @@ def solve(problem: cp.Problem, solver: str, options: dict, what: str) -> None:
 @dataclass(frozen=True)
 class Market:
     """The environment: the reserve construct ``ordc`` and the price c^shed on
-    load shed. ``C_inv`` is the annual cost of the investment layer from
-    :func:`C_inv`; ``clear`` needs it."""
+    load shed. ``C_inv_year`` is the annual cost of the investment layer from
+    :func:`C_inv`; ``clear`` prorates it to the window."""
 
     ordc: ORDC
     c_shed: float = VOLL
-    C_inv: float | None = None
+    C_inv_year: float | None = None
     solver: str = "GUROBI"
     solver_options: dict = field(default_factory=dict)
 
@@ -448,7 +441,7 @@ class Market:
         so the first step's unfilled part is written max(0, w − z): one row
         per unit, as a requirement on the largest unit is."""
         edges, prices = steps(self.ordc, self.c_shed)
-        M = (scenario.units * self.ordc.units[:, None])[self.ordc.units > 0]
+        M = (scenario.units * self.ordc.multiple[:, None])[self.ordc.multiple > 0]
         contingency = self.ordc.min_contingency
         if M.shape[0] > 0:
             contingency = cp.maximum(contingency, cp.max(M @ (g + r), axis=0))
@@ -484,8 +477,7 @@ class Market:
         edges = steps(self.ordc, self.c_shed)[0]
         if edges.size > 1:  # the first step's width is in C_ordc
             cons["steps"] = z[1:] <= np.diff(edges)[:, None]
-        if isinstance(sigma, cp.Variable):
-            cons["offer"] = sigma <= sigma_bid
+        cons["offer"] = sigma <= sigma_bid
         return cons
 
     # --- dispatch ------------------------------------------------------------------
@@ -499,34 +491,30 @@ class Market:
     ) -> Dispatch:
         """𝓜_ω(d, σ): dispatch against the load's bid (d_bid, sigma_bid) at offer
         price c^σ and its declared firm level, and read what cleared. ``d_firm``
-        is the type's level for a curtailable load, ``None`` otherwise. A
-        curtailable load does not offer reserve."""
-        if self.C_inv is None:
-            raise ValueError("clear needs Market.C_inv; see C_inv(market, windows(...))")
+        is the type's level for a curtailable load, ``None`` otherwise. The
+        operator serves any d between dᶠⁱʳᵐ and the bid, and a cut costs
+        c^shed, as shedding other load does. In a shortage the two tie: the
+        cut load's headroom is reserve, priced at the top of the curve, so
+        curtailing it frees a MW for others and loses a MW of reserve. The LP
+        then sheds other load first. Pricing the cut below c^shed does not
+        break the tie (CLAUDE.md, to do 1)."""
+        if self.C_inv_year is None:
+            raise ValueError("clear needs Market.C_inv_year; see C_inv(market, windows(...))")
         T, J = scenario.T, scenario.J
         d_bid = np.asarray(d_bid, float)
         sigma_bid = np.broadcast_to(np.maximum(np.asarray(sigma_bid, float), 0.0), (T,))  # a solver's −1e-10 on σ ≥ 0 is no offer
         c_sigma = np.broadcast_to(np.asarray(c_sigma, float), (T,))
         curtailable = d_firm is not None
         d_firm = np.asarray(d_firm, float) if curtailable else d_bid
-        if curtailable:
-            sigma_bid = np.zeros(T)
-        offers = bool(np.any(sigma_bid > 0.0))
 
-        g = cp.Variable((J, T), nonneg=True)
-        r = cp.Variable((J, T), nonneg=True)
-        s = cp.Variable(T, nonneg=True)
-        sigma = cp.Variable(T, nonneg=True) if offers else np.zeros(T)
-        d = cp.Variable(T) if curtailable else d_bid
+        d, sigma, s = cp.Variable(T), cp.Variable(T, nonneg=True), cp.Variable(T, nonneg=True)
+        g, r = cp.Variable((J, T), nonneg=True), cp.Variable((J, T), nonneg=True)
         z = cp.Variable((steps(self.ordc, self.c_shed)[1].size, T), nonneg=True)
         C_ordc = self.C_ordc(scenario, g, r, z)
 
-        cost = self.C_sys(scenario, g, r, sigma, c_sigma, s, C_ordc)
+        cost = self.C_sys(scenario, g, r, sigma, c_sigma, s, C_ordc) + self.c_shed * cp.sum(d_bid - d)
         cons = self.constraints(scenario, d, sigma, g, r, s, z, sigma_bid, d_firm)
-        if curtailable:
-            cost = cost + self.c_shed * cp.sum(d_bid - d)
-            cons["curtail"] = d >= d_firm
-            cons["serve"] = d <= d_bid
+        cons["curtail"], cons["serve"] = d >= d_firm, d <= d_bid
         problem = cp.Problem(cp.Minimize(cost), list(cons.values()))
         solve(problem, self.solver, self.solver_options, "clearing")
 
@@ -534,40 +522,49 @@ class Market:
         # The reserve row has reserve on the right and more reserve lowers cost, so μ = +dual.
         lam = -_dual(cons["balance"])
         mu = _dual(cons["reserve"])
-        d, sigma, r_ = _value(d), _value(sigma), _value(r)
+        d, sigma, r_, s_ = _value(d), _value(sigma), _value(r), _value(s)
         return Dispatch(
             d=d,
             sigma=sigma,
             g=_value(g),
             r=r_,
-            s=_value(s),
+            s=s_,
             lam=lam,
             mu=np.asarray(mu),
             nu=np.asarray(cons["capacity"].dual_value),
             C_ordc=_value(C_ordc),
-            C_energy=lam * (d + scenario.d_other),
+            C_energy=lam * (d + scenario.d_other - s_),
             C_res=mu * (r_.sum(axis=0) + sigma),
-            C_inv=float(self.C_inv) * T / HOURS_PER_YEAR,
+            C_inv=float(self.C_inv_year) * T / HOURS_PER_YEAR,
             d_bid=d_bid,
             d_firm=d_firm,
             curtailable=curtailable,
         )
 
 
+def baseline(market: Market, windows: list[Scenario]) -> list[Dispatch]:
+    """B0 in each window: dispatch at (δ, 0), the load inflexible. The one loop
+    over the year; C_inv, the results' Table 0 and the reserve-margin sweep
+    read it."""
+    m = replace(market, C_inv_year=0.0)
+    return [m.clear(s, s.delta, np.zeros(s.T), np.zeros(s.T)) for s in windows]
+
+
 def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
     """The annual cost of the investment layer: max(0, Σ_j cⁱⁿᵛ_j ḡ_j − rent),
     the fleet's investment cost on nameplate less the rent it earns on the B0
     path (δ, 0), in $. The rent is the fleet's profit, revenue above fuel and
-    reserve offers (:func:`rent`), summed over the windows and
-    scaled to 8760 hours. It is floored at zero: where prices already pay the
-    fleet, the layer bills zero and does not credit the load. ``clear``
-    prorates it to the window by T/8760. Cached
-    under ``~/.cache/flexload`` by market fields and the year's data; the cache
-    keeps the signed value."""
+    reserve offers (:func:`rent`), summed over the windows and scaled to 8760
+    hours. It is floored at zero: where prices already pay the fleet, the
+    layer bills zero and does not credit the load. ``clear`` prorates it to
+    the window by T/8760. Cached under ``~/.cache/flexload`` by this file's
+    source, the market and the windows' data; the cache keeps the signed
+    value."""
     key = None
     if cache:
-        h = hashlib.sha1(repr((market.ordc.min_contingency, market.c_shed, "rent as profit, 8760 h")).encode())
-        for a in (*steps(market.ordc, market.c_shed), market.ordc.units):
+        h = hashlib.sha1(Path(__file__).read_bytes())  # a change to the code is a new key
+        h.update(repr((market.ordc.min_contingency, market.c_shed)).encode())
+        for a in (*steps(market.ordc, market.c_shed), market.ordc.multiple):
             h.update(np.ascontiguousarray(a, dtype=float).tobytes())
         for s in windows:
             for a in (
@@ -576,30 +573,21 @@ def C_inv(market: Market, windows: list[Scenario], cache: bool = True) -> float:
                 s.cost_inv,
                 s.cost_gen,
                 s.cost_res,
+                s.nameplate,
+                s.unit,
+                s.renewable,
                 np.array([s.error_fit.m, s.error_fit.v]),
             ):
                 h.update(np.ascontiguousarray(a).tobytes())
         key = Path.home() / ".cache" / "flexload" / "C_inv" / f"{h.hexdigest()}.json"
         if key.exists():
             return max(float(json.loads(key.read_text())["annual"]), 0.0)
-    m = replace(market, C_inv=0.0)
-    by_window = []  # the fleet's rent in each window
-    for s in windows:
-        b0 = m.clear(s, s.delta, np.zeros(s.T), np.zeros(s.T))
-        by_window.append(rent(s, b0))
+    by_window = [rent(s, b0) for s, b0 in zip(windows, baseline(market, windows))]  # the fleet's rent in each window
     cost = float(np.sum(windows[0].cost_inv * windows[0].nameplate))
     annual = cost - float(np.sum(by_window)) * HOURS_PER_YEAR / sum(s.T for s in windows)
     if key is not None:
         key.parent.mkdir(parents=True, exist_ok=True)
-        key.write_text(
-            json.dumps(
-                {
-                    "annual": annual,
-                    "by_window": by_window,
-                    "starts": [s.start for s in windows],
-                }
-            )
-        )
+        key.write_text(json.dumps({"annual": annual, "by_window": by_window, "starts": [s.start for s in windows]}))
     return max(annual, 0.0)
 
 

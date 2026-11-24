@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2",
     "polars>=1.30",
     "rts-gmlc",
+    "scipy>=1.11",
 ]
 
 [dependency-groups]
